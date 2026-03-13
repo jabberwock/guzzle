@@ -202,7 +202,7 @@ pub async fn compile_harness(
     }
 }
 
-fn strip_target_includes(harness: &str, target_files: &[String]) -> String {
+pub fn strip_target_includes(harness: &str, target_files: &[String]) -> String {
     let stems: Vec<&str> = target_files.iter()
         .map(|f| f.rsplit('/').next().unwrap_or(f.as_str()))
         .collect();
@@ -217,7 +217,7 @@ fn strip_target_includes(harness: &str, target_files: &[String]) -> String {
         .join("\n")
 }
 
-fn build_extern_c_block(target_files: &[String]) -> String {
+pub fn build_extern_c_block(target_files: &[String]) -> String {
     let c_files: Vec<&String> = target_files.iter()
         .filter(|f| f.ends_with(".c"))
         .collect();
