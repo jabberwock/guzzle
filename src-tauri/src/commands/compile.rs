@@ -297,3 +297,123 @@ pub fn build_extern_c_block(target_files: &[String]) -> String {
     lines.push("/* ---------------------------------------------------- */\n".to_string());
     lines.join("\n") + "\n"
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    // --- strip_target_includes ---
+
+    #[test]
+    fn strip_removes_target_include() {
+        let harness = "#include \"msgparse.c\"\nint x;";
+        let result = strip_target_includes(harness, &["/path/to/msgparse.c".to_string()]);
+        assert!(!result.contains("#include \"msgparse.c\""));
+        assert!(result.contains("int x;"));
+    }
+
+    #[test]
+    fn strip_keeps_system_include() {
+        let harness = "#include <stdio.h>\nint x;";
+        let result = strip_target_includes(harness, &["msgparse.c".to_string()]);
+        assert!(result.contains("#include <stdio.h>"));
+    }
+
+    #[test]
+    fn strip_keeps_other_header() {
+        let harness = "#include \"other.h\"\nint x;";
+        let result = strip_target_includes(harness, &["msgparse.c".to_string()]);
+        assert!(result.contains("#include \"other.h\""));
+    }
+
+    #[test]
+    fn strip_empty_targets_unchanged() {
+        let harness = "#include \"foo.c\"\nint x;";
+        let result = strip_target_includes(harness, &[]);
+        assert_eq!(result, harness);
+    }
+
+    #[test]
+    fn strip_preserves_comment_containing_target_name() {
+        // A comment that mentions a target filename is not an include — keep it
+        let harness = "// msgparse.c is the parser\nint x;";
+        let result = strip_target_includes(harness, &["msgparse.c".to_string()]);
+        assert!(result.contains("// msgparse.c is the parser"));
+    }
+
+    // --- build_extern_c_block ---
+
+    #[test]
+    fn extern_c_empty_input() {
+        assert_eq!(build_extern_c_block(&[]), "");
+    }
+
+    #[test]
+    fn extern_c_cpp_only() {
+        assert_eq!(build_extern_c_block(&["foo.cpp".to_string()]), "");
+    }
+
+    #[test]
+    fn extern_c_c_file_primitive_types() {
+        let mut f = tempfile::Builder::new().suffix(".c").tempfile().unwrap();
+        writeln!(f, "int add(int a, int b) {{ return a + b; }}").unwrap();
+        let path = f.path().to_string_lossy().to_string();
+
+        let result = build_extern_c_block(&[path]);
+        assert!(result.contains("extern \"C\""));
+        assert!(result.contains("int add("));
+        assert!(!result.contains("typedef struct"));
+    }
+
+    #[test]
+    fn extern_c_c_file_custom_type_emits_typedef() {
+        let mut f = tempfile::Builder::new().suffix(".c").tempfile().unwrap();
+        // TlvField is a non-primitive type — build_extern_c_block should emit a typedef
+        writeln!(f, "TlvField *parse(unsigned char *buf, int len) {{ return 0; }}").unwrap();
+        let path = f.path().to_string_lossy().to_string();
+
+        let result = build_extern_c_block(&[path]);
+        assert!(result.contains("typedef struct TlvField TlvField;"));
+    }
+
+    #[test]
+    fn extern_c_c_file_with_companion_header() {
+        let dir = tempfile::tempdir().unwrap();
+        let c_path = dir.path().join("mylib.c");
+        let h_path = dir.path().join("mylib.h");
+        std::fs::write(&c_path, "int foo(int x) { return x; }").unwrap();
+        std::fs::write(&h_path, "int foo(int x);").unwrap();
+
+        let result = build_extern_c_block(&[c_path.to_string_lossy().to_string()]);
+        let h_str = h_path.to_string_lossy().replace('\\', "/");
+        assert!(result.contains(&format!("#include \"{h_str}\"")));
+    }
+
+    // --- Preamble regression tests ---
+
+    #[test]
+    fn preamble_unistd_guarded_by_ifndef_win32() {
+        let ifndef_pos = HARNESS_PREAMBLE.find("#ifndef _WIN32")
+            .expect("#ifndef _WIN32 not found in preamble");
+        let unistd_pos = HARNESS_PREAMBLE.find("unistd.h")
+            .expect("unistd.h not found in preamble");
+        assert!(ifndef_pos < unistd_pos,
+            "#ifndef _WIN32 must appear before unistd.h");
+    }
+
+    #[test]
+    fn preamble_exit_override_guarded_by_ifndef_win32() {
+        let exit_pos = HARNESS_PREAMBLE.find("extern \"C\" void exit(")
+            .expect("exit() override not found in preamble");
+        // The nearest #ifndef _WIN32 before the exit() declaration must exist
+        HARNESS_PREAMBLE[..exit_pos].rfind("#ifndef _WIN32")
+            .expect("exit() override must be inside #ifndef _WIN32 guard");
+    }
+
+    #[test]
+    fn preamble_no_crt_secure_no_warnings() {
+        assert!(!HARNESS_PREAMBLE.contains("_CRT_SECURE_NO_WARNINGS"),
+            "_CRT_SECURE_NO_WARNINGS must be a compiler flag, not in the preamble");
+    }
+}

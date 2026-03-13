@@ -185,7 +185,7 @@ pub async fn read_crash_files(corpus_dir: String) -> Result<Vec<CrashFile>, Stri
     Ok(crashes)
 }
 
-fn is_crash_filename(name: &str) -> bool {
+pub(crate) fn is_crash_filename(name: &str) -> bool {
     name.starts_with("crash-")
         || name.starts_with("oom-")
         || name.starts_with("timeout-")
@@ -217,7 +217,7 @@ fn emit_new_crashes(crash_dir: &PathBuf, app: &AppHandle, seen: &Arc<Mutex<HashS
     }
 }
 
-fn parse_fuzzer_stats(line: &str) -> Option<FuzzerStats> {
+pub(crate) fn parse_fuzzer_stats(line: &str) -> Option<FuzzerStats> {
     if !line.starts_with('#') { return None; }
 
     let total_execs = parse_field_u64(line, "#")?;
@@ -230,11 +230,108 @@ fn parse_fuzzer_stats(line: &str) -> Option<FuzzerStats> {
     Some(FuzzerStats { total_execs, coverage, corpus_size, execs_per_sec, run_time_secs })
 }
 
-fn parse_field_u64(line: &str, prefix: &str) -> Option<u64> {
+pub(crate) fn parse_field_u64(line: &str, prefix: &str) -> Option<u64> {
     let start = if prefix == "#" {
         1
     } else {
         line.find(prefix)? + prefix.len()
     };
     line[start..].split_whitespace().next()?.split('/').next()?.parse().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- parse_field_u64 ---
+
+    #[test]
+    fn field_u64_hash_prefix() {
+        assert_eq!(parse_field_u64("#1234 cov: 567", "#"), Some(1234));
+    }
+
+    #[test]
+    fn field_u64_cov_prefix() {
+        assert_eq!(parse_field_u64("#1234 cov: 567", "cov: "), Some(567));
+    }
+
+    #[test]
+    fn field_u64_slash_terminated() {
+        // exec/s: 1234/5 — should parse 1234 (before the slash)
+        assert_eq!(parse_field_u64("exec/s: 1234/5", "exec/s: "), Some(1234));
+    }
+
+    #[test]
+    fn field_u64_missing_prefix() {
+        assert_eq!(parse_field_u64("#1234 cov: 567", "exec/s: "), None);
+    }
+
+    #[test]
+    fn field_u64_non_numeric() {
+        assert_eq!(parse_field_u64("#abc cov: 567", "#"), None);
+    }
+
+    // --- parse_fuzzer_stats ---
+
+    #[test]
+    fn fuzzer_stats_full_line() {
+        let line = "#1234 pulse  cov: 50 corp: 10/200b lim: 4096 exec/s: 500 rss: 42Mb";
+        let stats = parse_fuzzer_stats(line).expect("should parse");
+        assert_eq!(stats.total_execs, 1234);
+        assert_eq!(stats.coverage, 50);
+        assert_eq!(stats.corpus_size, 10);
+        assert_eq!(stats.execs_per_sec, 500);
+        assert_eq!(stats.run_time_secs, 0); // filled in by caller
+    }
+
+    #[test]
+    fn fuzzer_stats_missing_optional_fields() {
+        let stats = parse_fuzzer_stats("#42").expect("should parse");
+        assert_eq!(stats.total_execs, 42);
+        assert_eq!(stats.coverage, 0);
+        assert_eq!(stats.corpus_size, 0);
+        assert_eq!(stats.execs_per_sec, 0);
+    }
+
+    #[test]
+    fn fuzzer_stats_non_stat_line() {
+        assert!(parse_fuzzer_stats("INFO: libFuzzer started").is_none());
+    }
+
+    // --- is_crash_filename ---
+
+    #[test]
+    fn crash_filename_crash() {
+        assert!(is_crash_filename("crash-abc123"));
+    }
+
+    #[test]
+    fn crash_filename_oom() {
+        assert!(is_crash_filename("oom-abc"));
+    }
+
+    #[test]
+    fn crash_filename_timeout() {
+        assert!(is_crash_filename("timeout-abc"));
+    }
+
+    #[test]
+    fn crash_filename_leak() {
+        assert!(is_crash_filename("leak-abc"));
+    }
+
+    #[test]
+    fn crash_filename_slow() {
+        assert!(is_crash_filename("slow-abc"));
+    }
+
+    #[test]
+    fn crash_filename_corpus_item() {
+        assert!(!is_crash_filename("corpus_item"));
+    }
+
+    #[test]
+    fn crash_filename_crash_no_dash() {
+        assert!(!is_crash_filename("crash"));
+    }
 }
