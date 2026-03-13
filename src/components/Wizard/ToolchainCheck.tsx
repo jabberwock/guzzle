@@ -185,6 +185,11 @@ export default function ToolchainCheck({ onNext, onClose }: Props) {
               value={toolchainInfo.fuzzer_supported}
               ok={toolchainInfo.fuzzer_supported}
             />
+            {!toolchainInfo.fuzzer_supported && toolchainInfo.fuzzer_error && (
+              <pre className="text-xs font-mono bg-[#0d1117] border border-[#30363d] rounded p-2 mt-1 text-[#f85149] whitespace-pre-wrap max-h-40 overflow-auto">
+                {toolchainInfo.fuzzer_error}
+              </pre>
+            )}
             <CheckRow
               label="-fsanitize=address"
               value={toolchainInfo.asan_supported}

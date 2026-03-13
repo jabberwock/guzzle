@@ -7,6 +7,7 @@ pub struct ToolchainInfo {
     pub clang_path: String,
     pub version: String,
     pub fuzzer_supported: bool,
+    pub fuzzer_error: String,
     pub asan_supported: bool,
 }
 
@@ -22,13 +23,14 @@ pub async fn check_toolchain() -> Result<ToolchainInfo, String> {
     let version = get_clang_version(&clang_path);
 
     // Test fuzzer support by compiling a minimal test
-    let fuzzer_supported = test_sanitizer(&clang_path, "fuzzer");
-    let asan_supported = test_sanitizer(&clang_path, "address");
+    let (fuzzer_supported, fuzzer_error) = test_sanitizer(&clang_path, "fuzzer");
+    let (asan_supported, _) = test_sanitizer(&clang_path, "address");
 
     Ok(ToolchainInfo {
         clang_path,
         version,
         fuzzer_supported,
+        fuzzer_error,
         asan_supported,
     })
 }
@@ -40,9 +42,9 @@ pub async fn check_toolchain_at(clang_path: String) -> Result<ToolchainInfo, Str
         return Err(format!("Path not found: {clang_path}"));
     }
     let version = get_clang_version(&clang_path);
-    let fuzzer_supported = test_sanitizer(&clang_path, "fuzzer");
-    let asan_supported = test_sanitizer(&clang_path, "address");
-    Ok(ToolchainInfo { clang_path, version, fuzzer_supported, asan_supported })
+    let (fuzzer_supported, fuzzer_error) = test_sanitizer(&clang_path, "fuzzer");
+    let (asan_supported, _) = test_sanitizer(&clang_path, "address");
+    Ok(ToolchainInfo { clang_path, version, fuzzer_supported, fuzzer_error, asan_supported })
 }
 
 /// Return candidate clang++ paths in preference order:
@@ -134,7 +136,7 @@ pub fn find_best_clang() -> Option<String> {
         if first_existing.is_none() {
             first_existing = Some(c.clone());
         }
-        if test_sanitizer(c, "fuzzer") {
+        if test_sanitizer(c, "fuzzer").0 {
             return Some(c.clone());
         }
     }
@@ -161,7 +163,7 @@ fn get_clang_version(clang: &str) -> String {
         .to_string()
 }
 
-fn test_sanitizer(clang: &str, sanitizer: &str) -> bool {
+fn test_sanitizer(clang: &str, sanitizer: &str) -> (bool, String) {
     use std::io::Write;
 
     let dir = std::env::temp_dir();
@@ -177,7 +179,7 @@ fn test_sanitizer(clang: &str, sanitizer: &str) -> bool {
     // resolve LLVMFuzzerTestOneInput without name mangling.
     let mut f = match std::fs::File::create(&src_path) {
         Ok(f) => f,
-        Err(_) => return false,
+        Err(e) => return (false, e.to_string()),
     };
     if sanitizer == "fuzzer" {
         let _ = writeln!(f,
@@ -190,7 +192,20 @@ fn test_sanitizer(clang: &str, sanitizer: &str) -> bool {
     drop(f);
 
     let mut cmd = Command::new(clang);
-    cmd.arg(format!("-fsanitize={sanitizer}"))
+
+    // On Windows, libFuzzer requires ASan to be enabled alongside it, and the
+    // combined flag must be passed as a single argument (matches the actual
+    // compile command: clang++ -fsanitize=fuzzer,address ... -ldbghelp -lshell32).
+    #[cfg(target_os = "windows")]
+    let sanitize_arg = if sanitizer == "fuzzer" {
+        "fuzzer,address".to_string()
+    } else {
+        sanitizer.to_string()
+    };
+    #[cfg(not(target_os = "windows"))]
+    let sanitize_arg = sanitizer.to_string();
+
+    cmd.arg(format!("-fsanitize={sanitize_arg}"))
        .arg("-x").arg("c++")
        .arg(src_path.to_str().unwrap_or(""))
        .arg("-o").arg(out_path.to_str().unwrap_or("guzzle_test_out"));
@@ -199,13 +214,22 @@ fn test_sanitizer(clang: &str, sanitizer: &str) -> bool {
     #[cfg(target_os = "windows")]
     cmd.args(["-ldbghelp", "-lshell32"]);
 
-    let status = cmd.output();
+    let result = cmd.output();
 
     let _ = std::fs::remove_file(&src_path);
     let _ = std::fs::remove_file(&out_path);
 
-    match status {
-        Ok(output) => output.status.success(),
-        Err(_) => false,
+    match result {
+        Ok(output) => {
+            if output.status.success() {
+                (true, String::new())
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+                let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+                let combined = if stdout.is_empty() { stderr } else if stderr.is_empty() { stdout } else { format!("{stdout}{stderr}") };
+                (false, combined)
+            }
+        }
+        Err(e) => (false, e.to_string()),
     }
 }

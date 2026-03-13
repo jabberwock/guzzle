@@ -13,6 +13,7 @@ export interface ToolchainInfo {
   clang_path: string;
   version: string;
   fuzzer_supported: boolean;
+  fuzzer_error: string;
   asan_supported: boolean;
 }
 
