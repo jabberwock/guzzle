@@ -50,10 +50,10 @@ sudo apt install -y \
 
 ### 2. Install LLVM + Clang with libFuzzer
 
-libFuzzer is bundled with clang — no separate package needed:
+On Debian/Kali, the libFuzzer runtime is in `compiler-rt` — separate from the `clang` package:
 
 ```bash
-sudo apt install -y clang llvm lld
+sudo apt install -y clang llvm lld compiler-rt
 ```
 
 Verify libFuzzer is available:
@@ -62,10 +62,12 @@ Verify libFuzzer is available:
 echo 'int main(){}' | clang -x c - -fsanitize=fuzzer -o /tmp/test && echo "OK"
 ```
 
-If that fails, install a specific versioned clang (Kali ships various LLVM versions):
+If that fails, your distro may ship a versioned LLVM. Find what's available and pin to it:
 
 ```bash
-sudo apt install -y clang-16 llvm-16
+apt-cache search clang | grep "^clang-[0-9]"
+# then install the version shown, e.g. clang-16:
+sudo apt install -y clang-16 llvm-16 compiler-rt
 sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-16 100
 sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-16 100
 ```
