@@ -24,7 +24,7 @@ Guzzle wraps [libFuzzer](https://llvm.org/docs/LibFuzzer.html) in a desktop GUI 
 
 ### 1. Install system dependencies
 
-Tauri requires GTK, WebKit, and several other libraries:
+Tauri uses WebKitGTK as its rendering engine on all Linux desktops — including KDE. The GTK libraries are required regardless of your DE and coexist fine alongside Qt.
 
 ```bash
 sudo apt update
