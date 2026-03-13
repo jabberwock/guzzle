@@ -32,6 +32,8 @@ pub struct CrashFile {
 
 // Resettable per-run child PID so stop_fuzzer can kill it.
 static FUZZER_PID: Mutex<Option<u32>> = Mutex::new(None);
+// Start time of the current fuzzer run, for computing elapsed time.
+static FUZZER_START: Mutex<Option<std::time::Instant>> = Mutex::new(None);
 
 #[tauri::command]
 pub async fn start_fuzzer(app: AppHandle, args: FuzzerArgs) -> Result<u32, String> {
@@ -64,8 +66,9 @@ pub async fn start_fuzzer(app: AppHandle, args: FuzzerArgs) -> Result<u32, Strin
     let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn fuzzer: {e}"))?;
     let pid = child.id();
 
-    // Store PID so stop_fuzzer can kill it
+    // Store PID and start time so stop_fuzzer / stat lines can use them
     *FUZZER_PID.lock().unwrap() = Some(pid);
+    *FUZZER_START.lock().unwrap() = Some(std::time::Instant::now());
 
     // Shared set of already-emitted crash file paths (deduplication)
     let seen_crashes: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
@@ -81,7 +84,10 @@ pub async fn start_fuzzer(app: AppHandle, args: FuzzerArgs) -> Result<u32, Strin
         if let Some(stderr) = stderr {
             let reader = BufReader::new(stderr);
             for line in reader.lines().map_while(Result::ok) {
-                if let Some(stats) = parse_fuzzer_stats(&line) {
+                if let Some(mut stats) = parse_fuzzer_stats(&line) {
+                    stats.run_time_secs = FUZZER_START.lock().unwrap()
+                        .map(|t| t.elapsed().as_secs())
+                        .unwrap_or(0);
                     let _ = app_out.emit("fuzzer_stats", stats);
                 }
                 if line.contains("Test unit written to")
@@ -118,6 +124,7 @@ pub async fn start_fuzzer(app: AppHandle, args: FuzzerArgs) -> Result<u32, Strin
         emit_new_crashes(&crash_dir_done, &app_done, &seen_done);
         let _ = app_done.emit("fuzzer_stopped", ());
         *FUZZER_PID.lock().unwrap() = None;
+        *FUZZER_START.lock().unwrap() = None;
     });
 
     Ok(pid)
@@ -215,7 +222,8 @@ fn parse_fuzzer_stats(line: &str) -> Option<FuzzerStats> {
     let coverage = parse_field_u64(line, "cov: ").unwrap_or(0);
     let corpus_size = parse_field_u64(line, "corp: ").unwrap_or(0);
     let execs_per_sec = parse_field_u64(line, "exec/s: ").unwrap_or(0);
-    let run_time_secs = parse_field_u64(line, "ft: ").unwrap_or(0);
+    // run_time_secs is filled in by the caller from FUZZER_START
+    let run_time_secs = 0;
 
     Some(FuzzerStats { total_execs, coverage, corpus_size, execs_per_sec, run_time_secs })
 }

@@ -68,3 +68,16 @@ export async function loadApiKey(providerName: string): Promise<string | null> {
 export async function revealInFinder(path: string): Promise<void> {
   return invoke("reveal_in_finder", { path });
 }
+
+export async function generatePoc(args: {
+  crashPath: string;
+  harnessSource: string;
+  targetFiles: string[];
+  includes: string[];
+  libraryFiles: string[];
+  clangOverride?: string;
+  provider: AiProvider;
+  functionSignature: FunctionSignature;
+}): Promise<string> {
+  return invoke("generate_poc", args);
+}

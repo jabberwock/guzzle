@@ -1,6 +1,6 @@
 mod commands;
 
-use commands::{toolchain, parser, ai, compile, fuzzer};
+use commands::{toolchain, parser, ai, compile, fuzzer, poc};
 
 #[tauri::command]
 fn reveal_in_finder(path: String) -> Result<(), String> {
@@ -39,6 +39,7 @@ pub fn run() {
             fuzzer::read_crash_files,
             ai::save_api_key,
             ai::load_api_key,
+            poc::generate_poc,
             reveal_in_finder,
         ])
         .run(tauri::generate_context!())

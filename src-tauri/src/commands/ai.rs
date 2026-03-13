@@ -140,6 +140,15 @@ Return ONLY the C/C++ source code, no markdown fences."#,
     (system, user)
 }
 
+/// Generic AI call — used by both harness generation and PoC generation.
+pub async fn call_ai(provider: &AiProvider, system: String, user: String) -> Result<String, String> {
+    let client = reqwest::Client::new();
+    match provider.format {
+        ApiFormat::Openai => call_openai_compat(&client, provider, system, user).await,
+        ApiFormat::Anthropic => call_anthropic(&client, provider, system, user).await,
+    }
+}
+
 // ── Main command ─────────────────────────────────────────────────────────────
 
 #[tauri::command]
