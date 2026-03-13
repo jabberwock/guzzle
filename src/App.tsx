@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readTextFile } from "@tauri-apps/plugin-fs";
 import { useSession } from "./store/session";
@@ -6,14 +7,17 @@ import Wizard from "./components/Wizard";
 
 function HomePage({ onOpen }: { onOpen: () => void }) {
   const { recentFiles, setFilePath, addRecentFile } = useSession();
+  const [recentError, setRecentError] = useState<string | null>(null);
 
   const openRecent = async (path: string) => {
+    setRecentError(null);
     try {
       const content = await readTextFile(path);
       setFilePath(path, content);
       addRecentFile(path);
     } catch (e) {
       console.error("Failed to open recent file", e);
+      setRecentError(`Could not open ${path.split("/").pop()}: ${String(e)}`);
     }
   };
 
@@ -34,6 +38,10 @@ function HomePage({ onOpen }: { onOpen: () => void }) {
       >
         Open C/C++ File…
       </button>
+
+      {recentError && (
+        <p className="text-sm text-[#f85149] max-w-md text-center">{recentError}</p>
+      )}
 
       {recentFiles.length > 0 && (
         <div className="w-full max-w-md">

@@ -6,10 +6,10 @@
   "permissions": [
     "core:default",
     "dialog:allow-open",
-    "fs:allow-read-text-file",
-    "fs:allow-read-file",
-    "fs:allow-read-dir",
-    "fs:allow-exists",
+    { "identifier": "fs:allow-read-text-file", "allow": [{ "path": "**" }] },
+    { "identifier": "fs:allow-read-file",      "allow": [{ "path": "**" }] },
+    { "identifier": "fs:allow-read-dir",       "allow": [{ "path": "**" }] },
+    { "identifier": "fs:allow-exists",         "allow": [{ "path": "**" }] },
     {
       "identifier": "shell:allow-open",
       "allow": [{ "url": "**" }]
