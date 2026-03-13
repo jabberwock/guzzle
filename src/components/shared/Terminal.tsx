@@ -1,0 +1,75 @@
+import { memo, useEffect, useRef } from "react";
+
+interface TerminalProps {
+  lines: string[];
+  className?: string;
+}
+
+// Color ANSI codes to spans
+function colorize(str: string): React.ReactNode[] {
+  const parts: React.ReactNode[] = [];
+  const regex = /(\x1b\[[0-9;]*m)/g;
+  let last = 0;
+  let currentStyle: React.CSSProperties = {};
+  let key = 0;
+
+  str.replace(regex, (match, _code, offset) => {
+    if (offset > last) {
+      parts.push(
+        <span key={key++} style={currentStyle}>
+          {str.slice(last, offset)}
+        </span>
+      );
+    }
+    // Parse basic ANSI codes
+    const codes = match.slice(2, -1).split(";").map(Number);
+    for (const code of codes) {
+      if (code === 0) currentStyle = {};
+      else if (code === 1) currentStyle = { ...currentStyle, fontWeight: "bold" };
+      else if (code === 31) currentStyle = { ...currentStyle, color: "#f85149" };
+      else if (code === 32) currentStyle = { ...currentStyle, color: "#3fb950" };
+      else if (code === 33) currentStyle = { ...currentStyle, color: "#d29922" };
+      else if (code === 34) currentStyle = { ...currentStyle, color: "#58a6ff" };
+      else if (code === 35) currentStyle = { ...currentStyle, color: "#bc8cff" };
+      else if (code === 36) currentStyle = { ...currentStyle, color: "#39c5cf" };
+    }
+    last = offset + match.length;
+    return match;
+  });
+
+  if (last < str.length) {
+    parts.push(
+      <span key={key++} style={currentStyle}>
+        {str.slice(last)}
+      </span>
+    );
+  }
+
+  return parts.length > 0 ? parts : [<span key={0}>{str}</span>];
+}
+
+export default memo(function Terminal({ lines, className = "" }: TerminalProps) {
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [lines]);
+
+  return (
+    <div
+      className={`font-mono text-xs leading-5 overflow-auto bg-[#0d1117] rounded-lg border border-[#30363d] p-3 ${className}`}
+      style={{ minHeight: 200 }}
+    >
+      {lines.length === 0 ? (
+        <span className="text-[#8b949e]">No output yet…</span>
+      ) : (
+        lines.map((line, i) => (
+          <div key={i} className="whitespace-pre-wrap break-all">
+            {colorize(line)}
+          </div>
+        ))
+      )}
+      <div ref={bottomRef} />
+    </div>
+  );
+});

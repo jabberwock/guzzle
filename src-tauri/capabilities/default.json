@@ -1,0 +1,18 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capabilities for Guzzle",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:allow-open",
+    "fs:allow-read-text-file",
+    "fs:allow-read-file",
+    "fs:allow-read-dir",
+    "fs:allow-exists",
+    {
+      "identifier": "shell:allow-open",
+      "allow": [{ "url": "**" }]
+    }
+  ]
+}
