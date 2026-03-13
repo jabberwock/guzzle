@@ -58,7 +58,7 @@ export default memo(function Terminal({ lines, className = "" }: TerminalProps) 
   return (
     <div
       className={`font-mono text-xs leading-5 overflow-auto bg-[#0d1117] rounded-lg border border-[#30363d] p-3 ${className}`}
-      style={{ minHeight: 200 }}
+      style={{ height: 260 }}
     >
       {lines.length === 0 ? (
         <span className="text-[#8b949e]">No output yet…</span>
