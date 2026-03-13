@@ -52,43 +52,69 @@ pub async fn check_toolchain_at(clang_path: String) -> Result<ToolchainInfo, Str
 fn candidate_clangs() -> Vec<String> {
     let mut candidates: Vec<String> = Vec::new();
 
-    // Brew LLVM fixed paths (Apple Silicon / Intel)
-    for base in &["/opt/homebrew/opt/llvm", "/usr/local/opt/llvm"] {
-        candidates.push(format!("{base}/bin/clang++"));
-        candidates.push(format!("{base}/bin/clang"));
+    // ── Windows ──────────────────────────────────────────────────────────────
+    #[cfg(target_os = "windows")]
+    {
+        // Standard LLVM installer default locations
+        for base in &[
+            r"C:\Program Files\LLVM\bin",
+            r"C:\Program Files (x86)\LLVM\bin",
+        ] {
+            candidates.push(format!(r"{base}\clang++.exe"));
+            candidates.push(format!(r"{base}\clang.exe"));
+        }
+        // Scoop: %USERPROFILE%\scoop\apps\llvm\current\bin
+        if let Ok(home) = std::env::var("USERPROFILE") {
+            candidates.push(format!(r"{home}\scoop\apps\llvm\current\bin\clang++.exe"));
+            candidates.push(format!(r"{home}\scoop\apps\llvm\current\bin\clang.exe"));
+        }
+        // Chocolatey
+        candidates.push(r"C:\ProgramData\chocolatey\lib\llvm\tools\bin\clang++.exe".into());
+        candidates.push(r"C:\ProgramData\chocolatey\lib\llvm\tools\bin\clang.exe".into());
     }
 
-    // Versioned brew llvm (e.g. llvm@18, llvm@17 …)
-    for base in &["/opt/homebrew/opt", "/usr/local/opt"] {
-        if let Ok(entries) = std::fs::read_dir(base) {
-            let mut versioned: Vec<String> = entries
-                .flatten()
-                .filter_map(|e| {
-                    let name = e.file_name().to_string_lossy().to_string();
-                    if name.starts_with("llvm@") { Some(name) } else { None }
-                })
-                .collect();
-            // Sort descending so higher versions are tried first
-            versioned.sort_by(|a, b| b.cmp(a));
-            for v in versioned {
-                candidates.push(format!("{base}/{v}/bin/clang++"));
-                candidates.push(format!("{base}/{v}/bin/clang"));
+    // ── macOS (Homebrew) ─────────────────────────────────────────────────────
+    #[cfg(target_os = "macos")]
+    {
+        // Brew LLVM fixed paths (Apple Silicon / Intel)
+        for base in &["/opt/homebrew/opt/llvm", "/usr/local/opt/llvm"] {
+            candidates.push(format!("{base}/bin/clang++"));
+            candidates.push(format!("{base}/bin/clang"));
+        }
+
+        // Versioned brew llvm (e.g. llvm@18, llvm@17 …)
+        for base in &["/opt/homebrew/opt", "/usr/local/opt"] {
+            if let Ok(entries) = std::fs::read_dir(base) {
+                let mut versioned: Vec<String> = entries
+                    .flatten()
+                    .filter_map(|e| {
+                        let name = e.file_name().to_string_lossy().to_string();
+                        if name.starts_with("llvm@") { Some(name) } else { None }
+                    })
+                    .collect();
+                versioned.sort_by(|a, b| b.cmp(a));
+                for v in versioned {
+                    candidates.push(format!("{base}/{v}/bin/clang++"));
+                    candidates.push(format!("{base}/{v}/bin/clang"));
+                }
             }
         }
     }
 
-    // Linux versioned clangs (e.g. clang++-19, clang++-18, … clang++-14)
-    // On Debian/Kali, versioned binaries know their own LLVM runtime dir, so
-    // `-fsanitize=fuzzer` works even when the unversioned `clang` does not.
-    for ver in (14u32..=21).rev() {
-        candidates.push(format!("/usr/bin/clang++-{ver}"));
-        candidates.push(format!("/usr/bin/clang-{ver}"));
-        // Some distros install to /usr/lib/llvm-N/bin/
-        candidates.push(format!("/usr/lib/llvm-{ver}/bin/clang++"));
-        candidates.push(format!("/usr/lib/llvm-{ver}/bin/clang"));
+    // ── Linux (versioned clangs) ─────────────────────────────────────────────
+    #[cfg(target_os = "linux")]
+    {
+        // On Debian/Kali, versioned binaries know their own LLVM runtime dir,
+        // so `-fsanitize=fuzzer` works even when the unversioned `clang` does not.
+        for ver in (14u32..=21).rev() {
+            candidates.push(format!("/usr/bin/clang++-{ver}"));
+            candidates.push(format!("/usr/bin/clang-{ver}"));
+            candidates.push(format!("/usr/lib/llvm-{ver}/bin/clang++"));
+            candidates.push(format!("/usr/lib/llvm-{ver}/bin/clang"));
+        }
     }
 
-    // PATH fallback
+    // ── PATH fallback (all platforms) ────────────────────────────────────────
     if let Ok(p) = which("clang++") { candidates.push(p.to_string_lossy().to_string()); }
     if let Ok(p) = which("clang")   { candidates.push(p.to_string_lossy().to_string()); }
 
@@ -139,31 +165,41 @@ fn test_sanitizer(clang: &str, sanitizer: &str) -> bool {
     use std::io::Write;
 
     let dir = std::env::temp_dir();
-    let src_path = dir.join("guzzle_test.c");
+    let src_path = dir.join("guzzle_test.cpp");
+
+    // On Windows the linker produces .exe; name it explicitly so we can clean up.
+    #[cfg(target_os = "windows")]
+    let out_path = dir.join("guzzle_test_out.exe");
+    #[cfg(not(target_os = "windows"))]
     let out_path = dir.join("guzzle_test_out");
 
-    // Write a minimal test file appropriate for the sanitizer being tested.
-    // For -fsanitize=fuzzer, libFuzzer provides its own main() so we must NOT
-    // define main() — instead provide LLVMFuzzerTestOneInput.
+    // Write a minimal C++ test. Use extern "C" so lld-link on Windows can
+    // resolve LLVMFuzzerTestOneInput without name mangling.
     let mut f = match std::fs::File::create(&src_path) {
         Ok(f) => f,
         Err(_) => return false,
     };
     if sanitizer == "fuzzer" {
-        let _ = writeln!(f, "#include <stdint.h>\n#include <stddef.h>\nint LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {{ return 0; }}");
+        let _ = writeln!(f,
+            "#include <stdint.h>\n#include <stddef.h>\n\
+             extern \"C\" int LLVMFuzzerTestOneInput(const uint8_t *d, size_t s) {{ return 0; }}"
+        );
     } else {
         let _ = writeln!(f, "int main() {{ return 0; }}");
     }
     drop(f);
 
-    let status = Command::new(clang)
-        .arg(format!("-fsanitize={}", sanitizer))
-        .arg("-x")
-        .arg("c")
-        .arg(src_path.to_str().unwrap_or(""))
-        .arg("-o")
-        .arg(out_path.to_str().unwrap_or("/dev/null"))
-        .output();
+    let mut cmd = Command::new(clang);
+    cmd.arg(format!("-fsanitize={sanitizer}"))
+       .arg("-x").arg("c++")
+       .arg(src_path.to_str().unwrap_or(""))
+       .arg("-o").arg(out_path.to_str().unwrap_or("guzzle_test_out"));
+
+    // Windows fuzzer runtime requires these system libraries to link.
+    #[cfg(target_os = "windows")]
+    cmd.args(["-ldbghelp", "-lshell32"]);
+
+    let status = cmd.output();
 
     let _ = std::fs::remove_file(&src_path);
     let _ = std::fs::remove_file(&out_path);

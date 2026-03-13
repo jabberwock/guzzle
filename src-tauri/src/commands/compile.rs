@@ -161,6 +161,10 @@ pub async fn compile_harness(
         }
     }
 
+    // Windows fuzzer runtime requires these system libraries.
+    #[cfg(target_os = "windows")]
+    cmd.args(["-ldbghelp", "-lshell32"]);
+
     cmd.arg("-o").arg(&out_path);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
