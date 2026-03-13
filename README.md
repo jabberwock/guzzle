@@ -22,11 +22,38 @@ Guzzle wraps [libFuzzer](https://llvm.org/docs/LibFuzzer.html) in a desktop GUI 
 <details>
 <summary><strong>Kali Linux / Debian / Ubuntu</strong></summary>
 
-### 1. Install LLVM + Clang with libFuzzer
+### 1. Install system dependencies
+
+Tauri requires GTK, WebKit, and several other libraries:
 
 ```bash
 sudo apt update
-sudo apt install -y clang llvm lld libfuzzer-dev
+sudo apt install -y \
+  build-essential \
+  curl \
+  wget \
+  file \
+  libssl-dev \
+  libgtk-3-dev \
+  libwebkit2gtk-4.1-dev \
+  libayatana-appindicator3-dev \
+  librsvg2-dev \
+  libglib2.0-dev \
+  libatk1.0-dev \
+  libgdk-pixbuf-2.0-dev \
+  libcairo2-dev \
+  libpango1.0-dev \
+  libasound2-dev
+```
+
+> On older Debian/Ubuntu, `libwebkit2gtk-4.1-dev` may be `libwebkit2gtk-4.0-dev`.
+
+### 2. Install LLVM + Clang with libFuzzer
+
+libFuzzer is bundled with clang — no separate package needed:
+
+```bash
+sudo apt install -y clang llvm lld
 ```
 
 Verify libFuzzer is available:
@@ -35,27 +62,29 @@ Verify libFuzzer is available:
 echo 'int main(){}' | clang -x c - -fsanitize=fuzzer -o /tmp/test && echo "OK"
 ```
 
-> On older Kali/Debian, the package may be `libclang-dev` or you may need a specific version:
-> ```bash
-> sudo apt install -y clang-16 llvm-16
-> sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-16 100
-> ```
+If that fails, install a specific versioned clang (Kali ships various LLVM versions):
 
-### 2. Install Rust
+```bash
+sudo apt install -y clang-16 llvm-16
+sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-16 100
+sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-16 100
+```
+
+### 3. Install Rust
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 ```
 
-### 3. Install Node.js (v18+)
+### 4. Install Node.js (v18+)
 
 ```bash
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt install -y nodejs
 ```
 
-### 4. Build Guzzle
+### 5. Build Guzzle
 
 ```bash
 git clone https://github.com/jabberwock/guzzle
