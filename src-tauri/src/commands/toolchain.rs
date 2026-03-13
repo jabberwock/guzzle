@@ -65,6 +65,17 @@ fn candidate_clangs() -> Vec<String> {
         }
     }
 
+    // Linux versioned clangs (e.g. clang++-19, clang++-18, … clang++-14)
+    // On Debian/Kali, versioned binaries know their own LLVM runtime dir, so
+    // `-fsanitize=fuzzer` works even when the unversioned `clang` does not.
+    for ver in (14u32..=21).rev() {
+        candidates.push(format!("/usr/bin/clang++-{ver}"));
+        candidates.push(format!("/usr/bin/clang-{ver}"));
+        // Some distros install to /usr/lib/llvm-N/bin/
+        candidates.push(format!("/usr/lib/llvm-{ver}/bin/clang++"));
+        candidates.push(format!("/usr/lib/llvm-{ver}/bin/clang"));
+    }
+
     // PATH fallback
     if let Ok(p) = which("clang++") { candidates.push(p.to_string_lossy().to_string()); }
     if let Ok(p) = which("clang")   { candidates.push(p.to_string_lossy().to_string()); }
