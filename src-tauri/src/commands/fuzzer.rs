@@ -38,8 +38,10 @@ static FUZZER_START: Mutex<Option<std::time::Instant>> = Mutex::new(None);
 #[tauri::command]
 pub async fn start_fuzzer(app: AppHandle, args: FuzzerArgs) -> Result<u32, String> {
     let corpus_dir = PathBuf::from(&args.corpus_dir);
-    std::fs::create_dir_all(&corpus_dir)
-        .map_err(|e| format!("Failed to create corpus dir: {e}"))?;
+    if !corpus_dir.is_dir() {
+        std::fs::create_dir_all(&corpus_dir)
+            .map_err(|e| format!("Failed to create corpus dir: {e}"))?;
+    }
 
     let crash_dir = corpus_dir
         .parent()
