@@ -163,10 +163,21 @@ pub async fn generate_harness(
     let (system, user) = build_prompt(&signature, &context_lines);
     let client = reqwest::Client::new();
 
-    match provider.format {
+    let raw = match provider.format {
         ApiFormat::Openai => call_openai_compat(&client, &provider, system, user).await,
         ApiFormat::Anthropic => call_anthropic(&client, &provider, system, user).await,
-    }
+    }?;
+
+    // If the model was cut off mid-function, close any unclosed braces.
+    let open: i32 = raw.chars().filter(|&c| c == '{').count() as i32;
+    let close: i32 = raw.chars().filter(|&c| c == '}').count() as i32;
+    let raw = if open > close {
+        format!("{}\n{}", raw, "}".repeat((open - close) as usize))
+    } else {
+        raw
+    };
+
+    Ok(raw)
 }
 
 async fn call_openai_compat(
@@ -183,7 +194,7 @@ async fn call_openai_compat(
             OaiMessage { role: "system".into(), content: system },
             OaiMessage { role: "user".into(), content: user },
         ],
-        max_tokens: 2048,
+        max_tokens: 4096,
         temperature: 0.2,
     };
 
@@ -225,7 +236,7 @@ async fn call_anthropic(
 
     let request = AnthropicRequest {
         model: provider.model.clone(),
-        max_tokens: 2048,
+        max_tokens: 4096,
         system,
         messages: vec![AnthropicMessage { role: "user".into(), content: user }],
     };
