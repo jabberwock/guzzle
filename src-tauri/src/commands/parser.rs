@@ -159,13 +159,30 @@ fn find_identifier_in(node: Node, source: &str) -> Option<String> {
     None
 }
 
+fn count_pointer_depth(node: Node) -> usize {
+    // pointer_declarator nodes nest for each level: char ** -> pointer(pointer(fn))
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "pointer_declarator" {
+            return 1 + count_pointer_depth(child);
+        }
+    }
+    1
+}
+
 fn extract_return_type(node: Node, source: &str) -> String {
-    // The first child before the declarator is the type specifier
+    // The first child before the declarator is the type specifier.
+    // For pointer return types (e.g. `char *fn(...)`) tree-sitter wraps the
+    // declarator in a pointer_declarator — collect the stars before breaking.
     let mut cursor = node.walk();
     let mut parts = Vec::new();
     for child in node.children(&mut cursor) {
         match child.kind() {
-            "function_declarator" | "pointer_declarator" => break,
+            "function_declarator" => break,
+            "pointer_declarator" => {
+                parts.push("*".repeat(count_pointer_depth(child)));
+                break;
+            }
             _ => {
                 let text = child.utf8_text(source.as_bytes()).unwrap_or("").trim().to_string();
                 if !text.is_empty() {
