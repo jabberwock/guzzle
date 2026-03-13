@@ -53,7 +53,7 @@ sudo apt install -y \
 On Kali/Debian, the libFuzzer runtime is in `libclang-rt-dev` — separate from the `clang` package:
 
 ```bash
-sudo apt install -y clang llvm lld libclang-rt-dev
+sudo apt install -y clang llvm llvm-dev lld libclang-rt-dev
 ```
 
 Verify libFuzzer is available:
