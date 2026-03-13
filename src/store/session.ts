@@ -22,6 +22,7 @@ export interface CompileSettings {
   library_files: string[];
   extra_flags: string;
   out_path: string;
+  clang_override: string;
 }
 
 export interface CrashFile {
@@ -161,6 +162,7 @@ export const useSession = create<SessionState>()(persist((set) => ({
     library_files: [],
     extra_flags: "",
     out_path: "",
+    clang_override: "",
   },
   compiledBinaryPath: null,
   compileLog: [],

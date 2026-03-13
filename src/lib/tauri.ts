@@ -18,6 +18,10 @@ export async function checkToolchain(): Promise<ToolchainInfo> {
   return invoke("check_toolchain");
 }
 
+export async function checkToolchainAt(clangPath: string): Promise<ToolchainInfo> {
+  return invoke("check_toolchain_at", { clangPath });
+}
+
 export async function parseFunctionAtLine(
   filePath: string,
   lineNumber: number
