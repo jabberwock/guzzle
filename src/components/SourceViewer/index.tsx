@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import MonacoEditor from "@monaco-editor/react";
 import { useSession } from "../../store/session";
 import { parseFunctionAtLine } from "../../lib/tauri";
@@ -10,9 +10,18 @@ export default function SourceViewer() {
   const [detecting, setDetecting] = useState(false);
   const detectTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Always-current ref so the Monaco cursor listener (registered once at mount)
+  // never holds a stale closure over filePath.
+  const filePathRef = useRef(filePath);
+  useEffect(() => { filePathRef.current = filePath; }, [filePath]);
+
+  // Reset detecting state whenever the file changes so we never get stuck.
+  useEffect(() => { setDetecting(false); }, [filePath]);
+
   const handleLineClick = useCallback(
     (lineNumber: number) => {
-      if (!filePath) return;
+      const currentPath = filePathRef.current;
+      if (!currentPath) return;
       setSelectedLine(lineNumber);
 
       if (detectTimeout.current) clearTimeout(detectTimeout.current);
@@ -21,7 +30,7 @@ export default function SourceViewer() {
         setDetecting(true);
         setFunctionSignature(null);
         try {
-          const sig = await parseFunctionAtLine(filePath, lineNumber);
+          const sig = await parseFunctionAtLine(currentPath, lineNumber);
           setFunctionSignature(sig);
         } catch (e) {
           console.error("parse error", e);
@@ -31,7 +40,7 @@ export default function SourceViewer() {
         }
       }, 200);
     },
-    [filePath, setSelectedLine, setFunctionSignature]
+    [setSelectedLine, setFunctionSignature]
   );
 
   const handleEditorMount = useCallback(
