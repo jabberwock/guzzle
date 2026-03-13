@@ -142,12 +142,18 @@ fn test_sanitizer(clang: &str, sanitizer: &str) -> bool {
     let src_path = dir.join("guzzle_test.c");
     let out_path = dir.join("guzzle_test_out");
 
-    // Write a minimal C file
+    // Write a minimal test file appropriate for the sanitizer being tested.
+    // For -fsanitize=fuzzer, libFuzzer provides its own main() so we must NOT
+    // define main() — instead provide LLVMFuzzerTestOneInput.
     let mut f = match std::fs::File::create(&src_path) {
         Ok(f) => f,
         Err(_) => return false,
     };
-    let _ = writeln!(f, "int main() {{ return 0; }}");
+    if sanitizer == "fuzzer" {
+        let _ = writeln!(f, "#include <stdint.h>\n#include <stddef.h>\nint LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {{ return 0; }}");
+    } else {
+        let _ = writeln!(f, "int main() {{ return 0; }}");
+    }
     drop(f);
 
     let status = Command::new(clang)
