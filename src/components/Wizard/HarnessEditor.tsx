@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import MonacoEditor from "@monaco-editor/react";
 import { useSession, PRESET_PROVIDERS, type AiProvider } from "../../store/session";
-import { generateHarness, saveApiKey, loadApiKey } from "../../lib/tauri";
+import { generateHarness, saveApiKey, loadApiKey, getCachedHarness, saveCachedHarness } from "../../lib/tauri";
 
 interface Props {
   onBack: () => void;
@@ -20,6 +20,7 @@ export default function HarnessEditor({ onBack, onNext }: Props) {
   const {
     functionSignature,
     fileContent,
+    filePath,
     harnessSource,
     harnessGenerating,
     aiProvider,
@@ -35,6 +36,7 @@ export default function HarnessEditor({ onBack, onNext }: Props) {
   );
   const [error, setError] = useState<string | null>(null);
   const [userEdited, setUserEdited] = useState(false);
+  const [fromCache, setFromCache] = useState(false);
   const [savingKey, setSavingKey] = useState(false);
   const [saveKeyError, setSaveKeyError] = useState<string | null>(null);
 
@@ -113,6 +115,7 @@ export default function HarnessEditor({ onBack, onNext }: Props) {
       return;
     }
     setError(null);
+    setFromCache(false);
     setHarnessGenerating(true);
     setUserEdited(false);
     // Commit provider to store
@@ -127,10 +130,19 @@ export default function HarnessEditor({ onBack, onNext }: Props) {
     }
   };
 
-  // Auto-generate on first open if we have a key
+  // Auto-generate on first open — check cache before calling AI
   useEffect(() => {
-    if (!harnessSource && !harnessGenerating && functionSignature) {
-      generate();
+    if (!harnessSource && !harnessGenerating && functionSignature && filePath) {
+      getCachedHarness(filePath, functionSignature.name)
+        .then((cached) => {
+          if (cached) {
+            setHarnessSource(cached);
+            setFromCache(true);
+          } else {
+            generate();
+          }
+        })
+        .catch(() => generate());
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -251,7 +263,10 @@ export default function HarnessEditor({ onBack, onNext }: Props) {
       </div>
 
       {/* Generate button row */}
-      <div className="flex justify-end">
+      <div className="flex justify-end items-center gap-3">
+        {fromCache && (
+          <span className="text-xs text-[#8b949e]">Cached — regenerate?</span>
+        )}
         <button
           onClick={generate}
           disabled={harnessGenerating}
@@ -312,7 +327,12 @@ export default function HarnessEditor({ onBack, onNext }: Props) {
           ← Back
         </button>
         <button
-          onClick={onNext}
+          onClick={() => {
+            if (filePath && functionSignature && harnessSource) {
+              void saveCachedHarness(filePath, functionSignature.name, harnessSource);
+            }
+            onNext();
+          }}
           disabled={!harnessSource || harnessGenerating}
           className="px-4 py-2 bg-[#238636] hover:bg-[#2ea043] disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium rounded-md transition-colors"
         >

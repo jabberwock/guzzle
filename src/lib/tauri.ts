@@ -69,6 +69,14 @@ export async function revealInFinder(path: string): Promise<void> {
   return invoke("reveal_in_finder", { path });
 }
 
+export async function getCachedHarness(filePath: string, functionName: string): Promise<string | null> {
+  return invoke("get_cached_harness", { filePath, functionName });
+}
+
+export async function saveCachedHarness(filePath: string, functionName: string, harness: string): Promise<void> {
+  return invoke("save_cached_harness", { filePath, functionName, harness });
+}
+
 export async function generatePoc(args: {
   crashPath: string;
   harnessSource: string;

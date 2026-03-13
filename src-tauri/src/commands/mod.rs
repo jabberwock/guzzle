@@ -4,3 +4,4 @@ pub mod ai;
 pub mod compile;
 pub mod fuzzer;
 pub mod poc;
+pub mod cache;
