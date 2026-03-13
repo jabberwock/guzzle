@@ -49,7 +49,7 @@ export default function FuzzerRunning({ onBack, onNext }: Props) {
   const [seedDir, setSeedDir] = useState<string | null>(null);
 
   const defaultCorpusDir = filePath
-    ? filePath.replace(/\/[^/]+$/, "") + "/.guzzle/corpus"
+    ? filePath.replace(/[/\\][^/\\]+$/, "") + "/.guzzle/corpus"
     : "/tmp/guzzle_corpus";
 
   const corpusDir = seedDir ?? defaultCorpusDir;

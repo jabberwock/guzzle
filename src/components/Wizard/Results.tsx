@@ -57,7 +57,7 @@ export default function Results({ onClose }: Props) {
 
   useEffect(() => {
     if (!filePath) return;
-    const corpusDir = filePath.replace(/\/[^/]+$/, "") + "/.guzzle/crashes";
+    const corpusDir = filePath.replace(/[/\\][^/\\]+$/, "") + "/.guzzle/crashes";
     (async () => {
       try {
         const files = await readCrashFiles(corpusDir);
@@ -72,7 +72,7 @@ export default function Results({ onClose }: Props) {
 
   const openFolder = async () => {
     if (!filePath) return;
-    const dir = filePath.replace(/\/[^/]+$/, "") + "/.guzzle";
+    const dir = filePath.replace(/[/\\][^/\\]+$/, "") + "/.guzzle";
     await revealInFinder(dir);
   };
 
