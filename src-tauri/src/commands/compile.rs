@@ -14,6 +14,8 @@ pub struct CompileSettings {
     pub library_files: Vec<String>,
     pub extra_flags: String,
     pub out_path: String,
+    /// User-overridden clang path; if None, auto-detect via find_best_clang()
+    pub clang_override: Option<String>,
 }
 
 /// Injected before the user's harness code.
@@ -103,7 +105,9 @@ pub async fn compile_harness(
         settings.out_path.clone()
     };
 
-    let clang = find_best_clang()
+    let clang = settings.clang_override.clone()
+        .filter(|p| !p.is_empty())
+        .or_else(find_best_clang)
         .ok_or_else(|| "No suitable clang found. Run the toolchain check first.".to_string())?;
 
     let sanitize_flag = if settings.sanitizers.is_empty() {

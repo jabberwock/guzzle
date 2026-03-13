@@ -33,6 +33,18 @@ pub async fn check_toolchain() -> Result<ToolchainInfo, String> {
     })
 }
 
+/// Check a specific user-supplied clang path without auto-detection.
+#[tauri::command]
+pub async fn check_toolchain_at(clang_path: String) -> Result<ToolchainInfo, String> {
+    if !std::path::Path::new(&clang_path).exists() {
+        return Err(format!("Path not found: {clang_path}"));
+    }
+    let version = get_clang_version(&clang_path);
+    let fuzzer_supported = test_sanitizer(&clang_path, "fuzzer");
+    let asan_supported = test_sanitizer(&clang_path, "address");
+    Ok(ToolchainInfo { clang_path, version, fuzzer_supported, asan_supported })
+}
+
 /// Return candidate clang++ paths in preference order:
 /// 1. Brew LLVM (Apple Silicon then Intel) — most likely to have libFuzzer
 /// 2. Any versioned llvm in /opt/homebrew/opt or /usr/local/opt

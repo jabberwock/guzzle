@@ -1,27 +1,67 @@
 import { useEffect, useState } from "react";
 import { useSession } from "../../store/session";
-import { checkToolchain } from "../../lib/tauri";
+import { checkToolchain, checkToolchainAt } from "../../lib/tauri";
 
 interface CheckRowProps {
   label: string;
   value: string | boolean | null;
   ok: boolean | null;
+  editable?: boolean;
+  onEdit?: (val: string) => void;
 }
 
-function CheckRow({ label, value, ok }: CheckRowProps) {
+function CheckRow({ label, value, ok, editable, onEdit }: CheckRowProps) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+
+  const startEdit = () => {
+    setDraft(typeof value === "string" ? value : "");
+    setEditing(true);
+  };
+
+  const commit = () => {
+    setEditing(false);
+    onEdit?.(draft.trim());
+  };
+
   return (
-    <div className="flex items-center justify-between py-2 border-b border-[#21262d] last:border-0">
-      <span className="text-sm text-[#e6edf3]">{label}</span>
-      <div className="flex items-center gap-2">
-        <span className="text-sm font-mono text-[#8b949e] max-w-xs truncate">
-          {typeof value === "boolean" ? (value ? "yes" : "no") : value ?? "—"}
-        </span>
-        {ok === null ? (
-          <div className="w-4 h-4 border-2 border-[#8b949e] border-t-transparent rounded-full animate-spin" />
-        ) : ok ? (
-          <span className="text-[#3fb950] text-lg">✓</span>
+    <div className="flex items-center justify-between py-2 border-b border-[#21262d] last:border-0 gap-3">
+      <span className="text-sm text-[#e6edf3] shrink-0">{label}</span>
+      <div className="flex items-center gap-2 min-w-0 flex-1 justify-end">
+        {editing ? (
+          <>
+            <input
+              autoFocus
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") commit(); if (e.key === "Escape") setEditing(false); }}
+              className="flex-1 min-w-0 px-2 py-0.5 bg-[#0d1117] border border-[#58a6ff] rounded text-sm font-mono text-[#e6edf3] outline-none"
+            />
+            <button onClick={commit} className="text-xs px-2 py-0.5 bg-[#238636] hover:bg-[#2ea043] text-white rounded">OK</button>
+            <button onClick={() => setEditing(false)} className="text-xs px-2 py-0.5 bg-[#21262d] hover:bg-[#30363d] text-[#8b949e] rounded">✕</button>
+          </>
         ) : (
-          <span className="text-[#f85149] text-lg">✗</span>
+          <>
+            <span className="text-sm font-mono text-[#8b949e] truncate max-w-xs">
+              {typeof value === "boolean" ? (value ? "yes" : "no") : value ?? "—"}
+            </span>
+            {editable && (
+              <button
+                onClick={startEdit}
+                title="Edit path"
+                className="text-[#8b949e] hover:text-[#58a6ff] shrink-0 text-xs px-1"
+              >
+                ✎
+              </button>
+            )}
+            {ok === null ? (
+              <div className="w-4 h-4 border-2 border-[#8b949e] border-t-transparent rounded-full animate-spin shrink-0" />
+            ) : ok ? (
+              <span className="text-[#3fb950] text-lg shrink-0">✓</span>
+            ) : (
+              <span className="text-[#f85149] text-lg shrink-0">✗</span>
+            )}
+          </>
         )}
       </div>
     </div>
@@ -33,9 +73,10 @@ interface Props {
 }
 
 export default function ToolchainCheck({ onNext }: Props) {
-  const { toolchainInfo, setToolchainInfo } = useSession();
+  const { toolchainInfo, setToolchainInfo, compileSettings, updateCompileSettings } = useSession();
   const [loading, setLoading] = useState(!toolchainInfo);
   const [error, setError] = useState<string | null>(null);
+  const [rechecking, setRechecking] = useState(false);
 
   useEffect(() => {
     if (toolchainInfo) {
@@ -48,6 +89,8 @@ export default function ToolchainCheck({ onNext }: Props) {
         const info = await checkToolchain();
         if (!cancelled) {
           setToolchainInfo(info);
+          // If auto-detected path differs from any saved override, clear the override
+          // so the display stays accurate.
           setLoading(false);
         }
       } catch (e) {
@@ -68,6 +111,21 @@ export default function ToolchainCheck({ onNext }: Props) {
     }
   }, [toolchainInfo, onNext]);
 
+  const handleEditPath = async (newPath: string) => {
+    if (!newPath) return;
+    updateCompileSettings({ clang_override: newPath });
+    setRechecking(true);
+    setError(null);
+    try {
+      const info = await checkToolchainAt(newPath);
+      setToolchainInfo(info);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setRechecking(false);
+    }
+  };
+
   const allGood = toolchainInfo?.clang_path && toolchainInfo.fuzzer_supported && toolchainInfo.asan_supported;
 
   return (
@@ -85,6 +143,11 @@ export default function ToolchainCheck({ onNext }: Props) {
             <div className="w-5 h-5 border-2 border-[#58a6ff] border-t-transparent rounded-full animate-spin" />
             <span className="text-sm text-[#8b949e]">Checking toolchain…</span>
           </div>
+        ) : rechecking ? (
+          <div className="flex items-center gap-3 py-4">
+            <div className="w-5 h-5 border-2 border-[#58a6ff] border-t-transparent rounded-full animate-spin" />
+            <span className="text-sm text-[#8b949e]">Re-checking…</span>
+          </div>
         ) : error ? (
           <div className="text-[#f85149] text-sm">{error}</div>
         ) : toolchainInfo ? (
@@ -93,6 +156,8 @@ export default function ToolchainCheck({ onNext }: Props) {
               label="clang path"
               value={toolchainInfo.clang_path || "not found"}
               ok={!!toolchainInfo.clang_path}
+              editable
+              onEdit={handleEditPath}
             />
             <CheckRow
               label="clang version"
@@ -120,14 +185,13 @@ export default function ToolchainCheck({ onNext }: Props) {
             <p className="mb-1">
               <strong>clang not found.</strong> Install LLVM:{" "}
               <span className="font-mono text-[#58a6ff]">brew install llvm</span> (macOS) or{" "}
-              <span className="font-mono text-[#58a6ff]">apt install clang</span> (Linux) or download from{" "}
-              <span className="font-mono text-[#58a6ff]">llvm.org/releases</span> (Windows).
+              <span className="font-mono text-[#58a6ff]">apt install clang llvm-dev libclang-rt-dev</span> (Linux)
             </p>
           )}
           {toolchainInfo.clang_path && !toolchainInfo.fuzzer_supported && (
             <p className="mb-1">
-              <strong>libFuzzer not supported.</strong> Your clang may lack fuzzer runtime. On macOS use{" "}
-              <span className="font-mono text-[#58a6ff]">brew install llvm</span> and ensure LLVM clang is in PATH (not Apple clang).
+              <strong>libFuzzer not supported.</strong> Click the ✎ pencil next to the path and enter a versioned clang like{" "}
+              <span className="font-mono text-[#58a6ff]">/usr/bin/clang++-16</span>.
             </p>
           )}
         </div>

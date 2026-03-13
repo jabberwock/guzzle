@@ -30,6 +30,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             toolchain::check_toolchain,
+            toolchain::check_toolchain_at,
             parser::parse_function_at_line,
             ai::generate_harness,
             compile::compile_harness,
