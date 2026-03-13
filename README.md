@@ -4,6 +4,8 @@
 
 Guzzle wraps [libFuzzer](https://llvm.org/docs/LibFuzzer.html) in a desktop GUI that handles harness generation (via AI), compilation, and live fuzzing output. It works on source files or pre-built libraries.
 
+![Guzzle screenshot](screenshot.png)
+
 ---
 
 ## Features
