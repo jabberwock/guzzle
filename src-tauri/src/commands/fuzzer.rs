@@ -37,7 +37,17 @@ static FUZZER_START: Mutex<Option<std::time::Instant>> = Mutex::new(None);
 
 #[tauri::command]
 pub async fn start_fuzzer(app: AppHandle, args: FuzzerArgs) -> Result<u32, String> {
-    let corpus_dir = PathBuf::from(&args.corpus_dir);
+    // JS paths use forward slashes; normalize to native separators so that
+    // Windows path operations (is_dir, create_dir_all) behave correctly.
+    #[cfg(windows)]
+    let (corpus_str, binary_str) = (
+        args.corpus_dir.replace('/', "\\"),
+        args.binary.replace('/', "\\"),
+    );
+    #[cfg(not(windows))]
+    let (corpus_str, binary_str) = (args.corpus_dir.clone(), args.binary.clone());
+
+    let corpus_dir = PathBuf::from(&corpus_str);
     if !corpus_dir.is_dir() {
         std::fs::create_dir_all(&corpus_dir)
             .map_err(|e| format!("Failed to create corpus dir: {e}"))?;
@@ -46,13 +56,19 @@ pub async fn start_fuzzer(app: AppHandle, args: FuzzerArgs) -> Result<u32, Strin
     let crash_dir = corpus_dir
         .parent()
         .map(|p| p.join("crashes"))
-        .unwrap_or_else(|| PathBuf::from("/tmp/guzzle_crashes"));
+        .unwrap_or_else(|| {
+            #[cfg(windows)]
+            return PathBuf::from(std::env::temp_dir().join("guzzle_crashes"));
+            #[cfg(not(windows))]
+            return PathBuf::from("/tmp/guzzle_crashes");
+        });
     std::fs::create_dir_all(&crash_dir)
         .map_err(|e| format!("Failed to create crash dir: {e}"))?;
 
-    let mut cmd = Command::new(&args.binary);
+    let mut cmd = Command::new(&binary_str);
     cmd.arg(corpus_dir.to_str().unwrap_or("."));
-    cmd.arg(format!("-artifact_prefix={}/", crash_dir.to_string_lossy()));
+    // Append the platform separator so libFuzzer sees a clean directory prefix
+    cmd.arg(format!("-artifact_prefix={}{}", crash_dir.to_string_lossy(), std::path::MAIN_SEPARATOR));
 
 
     if args.max_total_time > 0 {
