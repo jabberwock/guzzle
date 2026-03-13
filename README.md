@@ -126,7 +126,9 @@ brew install llvm
 Guzzle automatically finds Homebrew LLVM — no PATH changes needed. To verify manually:
 
 ```bash
-$(brew --prefix llvm)/bin/clang++ -fsanitize=fuzzer /dev/null -o /tmp/test && echo "OK"
+echo '#include <stdint.h>
+int LLVMFuzzerTestOneInput(const uint8_t *d, size_t s){return 0;}' \
+  | $(brew --prefix llvm)/bin/clang++ -x c++ - -fsanitize=fuzzer -o /tmp/guzzle_test && echo "OK"
 ```
 
 ### 2. Install Rust
@@ -184,10 +186,21 @@ Verify:
 
 ```powershell
 clang --version
-clang -fsanitize=fuzzer -x c NUL -o NUL
 ```
 
-If the second command fails, libFuzzer runtime is not bundled in your LLVM build — check the LLVM release notes for Windows fuzzer support.
+To verify libFuzzer support, save this to `test.cpp` and compile it:
+
+```cpp
+#include <stdint.h>
+#include <stddef.h>
+int LLVMFuzzerTestOneInput(const uint8_t *d, size_t s) { return 0; }
+```
+
+```powershell
+clang++ -fsanitize=fuzzer test.cpp -o test.exe
+```
+
+If that fails, libFuzzer runtime is not bundled in your LLVM build — check the LLVM release notes for Windows fuzzer support.
 
 ### 2. Install Rust
 
@@ -272,4 +285,29 @@ Corpus and crashes are saved in `.guzzle/` next to your source file.
 
 ## Contributing
 
-PRs welcome. The stack is Tauri 2 + React + TypeScript (frontend) and Rust (backend). Run in dev mode with `npm run tauri dev`.
+PRs and issues welcome. A few ground rules:
+
+**Before opening a PR**
+- Open an issue first for anything non-trivial so we can agree on direction
+- Keep PRs focused — one thing per PR
+- Test on at least one real C/C++ file end-to-end before submitting
+
+**Stack**
+- Frontend: Tauri 2 + React 18 + TypeScript + Tailwind CSS v4
+- Backend: Rust (Tauri commands in `src-tauri/src/commands/`)
+- Dev mode: `npm run tauri dev` from the project root
+
+**What's welcome**
+- Bug fixes (always welcome — please include steps to reproduce in the issue)
+- New AI provider presets
+- Better tree-sitter parsing for edge-case C/C++ signatures
+- Distro-specific install fixes / docs
+- Windows testing and fixes (experimental platform, needs love)
+
+**What to avoid**
+- Large refactors without prior discussion
+- Adding dependencies without a clear reason
+- UI changes that break the existing wizard flow
+
+**libFuzzer note**
+When writing tests or verify commands, always use `LLVMFuzzerTestOneInput` as the entry point — never `int main()`. libFuzzer provides its own `main()` and the linker will reject a file that defines both.
