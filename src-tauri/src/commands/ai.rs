@@ -126,12 +126,15 @@ Requirements:
 4. Always include ALL necessary headers. Standard headers to consider:
    - `<stdint.h>`, `<stddef.h>` — always required for uint8_t / size_t
    - `<stdlib.h>`, `<string.h>` — for malloc/free/memcpy/strlen
-   - `<unistd.h>` — for close(), read(), write(), and other POSIX syscalls
-   - `<fcntl.h>` — for open(), O_RDONLY etc.
    - `<stdio.h>` — for FILE*, fopen(), fclose()
    - Any headers implied by the context above
+   - IMPORTANT: do NOT use `<unistd.h>`, `<fcntl.h>`, or any other POSIX-only
+     headers — the harness must compile on Windows (MSVC/clang-cl) as well as Linux/macOS.
+     Use only headers from the C/C++ standard library.
 5. Do NOT call exit() or abort()
-6. Add a brief comment explaining the fuzzing strategy
+6. Add `#define _CRT_SECURE_NO_WARNINGS` before any includes to suppress MSVC
+   deprecation warnings for standard C functions like fopen, strcpy, etc.
+7. Add a brief comment explaining the fuzzing strategy
 
 Return ONLY the C/C++ source code, no markdown fences."#,
         func_name = signature.name
