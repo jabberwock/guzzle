@@ -40,14 +40,18 @@ const HARNESS_PREAMBLE: &str = r#"/* === Guzzle preamble === */
 /* Override exit() — some targets call exit(0) on bad input which would kill
    the entire fuzzer process. longjmp back to our wrapper instead.
    NOTE: abort() is intentionally NOT overridden — ASan uses it to signal
-   crashes to libFuzzer's signal handler. */
+   crashes to libFuzzer's signal handler.
+   NOTE: Windows/lld-link statically links the CRT so exit() cannot be
+   redefined; skip the override there. */
 jmp_buf __guzzle_exit_buf;
 static int __guzzle_jmp_ready = 0;
+#ifndef _WIN32
 extern "C" void exit(int code) {
     if (__guzzle_jmp_ready) { longjmp(__guzzle_exit_buf, 1); }
     /* setjmp not called yet (e.g. during startup) — let it propagate */
     __builtin_trap();
 }
+#endif
 /* === end preamble === */
 
 "#;
