@@ -42,7 +42,7 @@ export default function Wizard() {
         {/* Step content */}
         <div className="flex-1 overflow-y-auto px-6 pb-6">
           {wizardStep === "toolchain" && (
-            <ToolchainCheck onNext={() => goTo("harness")} />
+            <ToolchainCheck onNext={() => goTo("harness")} onClose={closeWizard} />
           )}
           {wizardStep === "harness" && (
             <HarnessEditor
