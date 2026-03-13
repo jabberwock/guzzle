@@ -200,7 +200,7 @@ export const useSession = create<SessionState>()(persist((set) => ({
   clearCompileLog: () => set({ compileLog: [] }),
   setFuzzerPid: (pid) => set({ fuzzerPid: pid }),
   appendFuzzerOutput: (line) =>
-    set((s) => ({ fuzzerOutput: [...s.fuzzerOutput.slice(-2000), line] })),
+    set((s) => ({ fuzzerOutput: [...s.fuzzerOutput.slice(-500), line] })),
   clearFuzzerOutput: () => set({ fuzzerOutput: [] }),
   setFuzzerStats: (stats) => set({ fuzzerStats: stats ?? null }),
   setCrashes: (crashes) => set({ crashes }),
