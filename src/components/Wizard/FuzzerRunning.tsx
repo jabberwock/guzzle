@@ -175,14 +175,16 @@ export default function FuzzerRunning({ onBack, onNext }: Props) {
         <StatBadge label="Run Time"  value={fuzzerStats ? fmtTime(fuzzerStats.run_time_secs) : "—"} />
       </div>
 
-      {crashes.length > 0 && (
-        <div className="bg-[#3d1414] border border-[#f85149] rounded-md p-3 text-sm text-[#f85149] flex items-center justify-between">
-          <span>🐛 {crashes.length} crash{crashes.length !== 1 ? "es" : ""} found!</span>
-          <button onClick={onNext} className="underline text-xs">View results →</button>
-        </div>
-      )}
+      <div className={`rounded-md p-3 text-sm flex items-center justify-between transition-colors ${
+        crashes.length > 0
+          ? "bg-[#3d1414] border border-[#f85149] text-[#f85149]"
+          : "bg-transparent border border-transparent text-transparent"
+      }`}>
+        <span>🐛 {crashes.length} crash{crashes.length !== 1 ? "es" : ""} found!</span>
+        <button onClick={crashes.length > 0 ? onNext : undefined} className="underline text-xs">View results →</button>
+      </div>
 
-      <Terminal lines={fuzzerOutput} className="flex-1" />
+      <Terminal lines={fuzzerOutput} />
 
       <div className="flex justify-between">
         <button
