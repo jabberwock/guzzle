@@ -70,9 +70,10 @@ function CheckRow({ label, value, ok, editable, onEdit }: CheckRowProps) {
 
 interface Props {
   onNext: () => void;
+  onClose: () => void;
 }
 
-export default function ToolchainCheck({ onNext }: Props) {
+export default function ToolchainCheck({ onNext, onClose }: Props) {
   const { toolchainInfo, setToolchainInfo, compileSettings, updateCompileSettings } = useSession();
   const [loading, setLoading] = useState(!toolchainInfo);
   const [error, setError] = useState<string | null>(null);
@@ -123,6 +124,21 @@ export default function ToolchainCheck({ onNext }: Props) {
       setError(String(e));
     } finally {
       setRechecking(false);
+    }
+  };
+
+  const resetAutoDetect = async () => {
+    updateCompileSettings({ clang_override: "" });
+    setToolchainInfo(null as any);
+    setError(null);
+    setLoading(true);
+    try {
+      const info = await checkToolchain();
+      setToolchainInfo(info);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -203,7 +219,23 @@ export default function ToolchainCheck({ onNext }: Props) {
         </div>
       )}
 
-      <div className="flex justify-end">
+      <div className="flex justify-between">
+        <div className="flex gap-2">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] text-[#8b949e] text-sm font-medium rounded-md transition-colors"
+          >
+            ← Close
+          </button>
+          {compileSettings.clang_override && (
+            <button
+              onClick={resetAutoDetect}
+              className="px-4 py-2 bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] text-[#8b949e] text-sm font-medium rounded-md transition-colors"
+            >
+              Auto-detect
+            </button>
+          )}
+        </div>
         <button
           onClick={onNext}
           disabled={loading || !allGood}
