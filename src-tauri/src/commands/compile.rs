@@ -28,8 +28,10 @@ const HARNESS_PREAMBLE: &str = r#"/* === Guzzle preamble === */
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#ifndef _WIN32
 #include <unistd.h>
 #include <fcntl.h>
+#endif
 #include <setjmp.h>
 
 /* Rename the user's entry point so we can wrap it with setjmp protection */
