@@ -165,7 +165,7 @@ pub async fn compile_harness(
 
     // Windows fuzzer runtime requires these system libraries.
     #[cfg(target_os = "windows")]
-    cmd.args(["-ldbghelp", "-lshell32"]);
+    cmd.args(["-D_CRT_SECURE_NO_WARNINGS", "-ldbghelp", "-lshell32"]);
 
     cmd.arg("-o").arg(&out_path);
     cmd.stdout(Stdio::piped());
@@ -232,10 +232,49 @@ pub fn build_extern_c_block(target_files: &[String]) -> String {
         return String::new();
     }
 
-    let mut decls = Vec::new();
+    let mut lines = vec![
+        "/* --- extern \"C\" declarations injected by Guzzle --- */".to_string(),
+        "extern \"C\" {".to_string(),
+    ];
+
     for path in &c_files {
-        for sig in get_all_functions(path) {
-            if sig.name == "main" { continue; }
+        // If a companion header exists (e.g. msgparse.h for msgparse.c), include it.
+        // This brings in type definitions that forward-declarations alone can't provide.
+        let header = std::path::Path::new(path).with_extension("h");
+        if header.exists() {
+            lines.push(format!("    #include \"{}\"", header.to_string_lossy().replace('\\', "/")));
+            continue;
+        }
+
+        // No header — fall back to forward-declaring each function.
+        // Collect any unknown struct/typedef names used in signatures so we
+        // can emit forward declarations and avoid "unknown type" errors.
+        let mut seen_types: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let sigs: Vec<_> = get_all_functions(path)
+            .into_iter()
+            .filter(|s| s.name != "main")
+            .collect();
+
+        // Emit `typedef struct X X;` for any non-primitive pointer types.
+        let primitive = |t: &str| {
+            let base = t.trim_end_matches('*').trim().trim_end_matches("const").trim();
+            matches!(base, "void"|"int"|"char"|"float"|"double"|"long"|"short"
+                        |"uint8_t"|"uint16_t"|"uint32_t"|"uint64_t"
+                        |"int8_t"|"int16_t"|"int32_t"|"int64_t"
+                        |"size_t"|"bool"|"unsigned"|"signed")
+        };
+        for sig in &sigs {
+            let all_types = std::iter::once(sig.return_type.as_str())
+                .chain(sig.params.iter().map(|p| p.type_name.as_str()));
+            for t in all_types {
+                let base = t.trim_end_matches('*').trim().trim_start_matches("const").trim().to_string();
+                if !primitive(t) && !base.is_empty() && seen_types.insert(base.clone()) {
+                    lines.push(format!("    typedef struct {base} {base};"));
+                }
+            }
+        }
+
+        for sig in &sigs {
             let params: Vec<String> = sig.params.iter().map(|p| {
                 if p.param_name.is_empty() {
                     p.type_name.clone()
@@ -243,19 +282,14 @@ pub fn build_extern_c_block(target_files: &[String]) -> String {
                     format!("{} {}", p.type_name, p.param_name)
                 }
             }).collect();
-            decls.push(format!(
+            lines.push(format!(
                 "    {} {}({});",
                 sig.return_type, sig.name, params.join(", ")
             ));
         }
     }
 
-    if decls.is_empty() {
-        return String::new();
-    }
-
-    format!(
-        "/* --- extern \"C\" declarations injected by Guzzle --- */\nextern \"C\" {{\n{}\n}}\n/* ---------------------------------------------------- */\n\n",
-        decls.join("\n")
-    )
+    lines.push("}".to_string());
+    lines.push("/* ---------------------------------------------------- */\n".to_string());
+    lines.join("\n") + "\n"
 }
