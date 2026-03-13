@@ -50,10 +50,10 @@ sudo apt install -y \
 
 ### 2. Install LLVM + Clang with libFuzzer
 
-On Debian/Kali, the libFuzzer runtime is in `compiler-rt` — separate from the `clang` package:
+On Kali/Debian, the libFuzzer runtime is in `libclang-rt-dev` — separate from the `clang` package:
 
 ```bash
-sudo apt install -y clang llvm lld compiler-rt
+sudo apt install -y clang llvm lld libclang-rt-dev
 ```
 
 Verify libFuzzer is available:
@@ -62,14 +62,14 @@ Verify libFuzzer is available:
 echo 'int main(){}' | clang -x c - -fsanitize=fuzzer -o /tmp/test && echo "OK"
 ```
 
-If that fails, your distro may ship a versioned LLVM. Find what's available and pin to it:
+If that fails, your distro ships versioned LLVM packages. Find what's installed and use the matching version:
 
 ```bash
-apt-cache search clang | grep "^clang-[0-9]"
-# then install the version shown, e.g. clang-16:
-sudo apt install -y clang-16 llvm-16 compiler-rt
-sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-16 100
-sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-16 100
+apt-cache search libclang-rt | grep "^libclang-rt-[0-9]"
+# install the version matching your clang, e.g. for clang-19:
+sudo apt install -y clang-19 llvm-19 libclang-rt-19-dev
+sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-19 100
+sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-19 100
 ```
 
 ### 3. Install Rust
