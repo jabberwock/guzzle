@@ -219,10 +219,8 @@ export default function Results({ onClose }: Props) {
                       disabled={poc?.status === "running"}
                       className="px-3 py-1.5 bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] text-xs text-[#e6edf3] rounded-md transition-colors disabled:opacity-40 flex items-center gap-2"
                     >
-                      {poc?.status === "running" ? (
+                      {poc?.status === "running" && (
                         <div className="w-3 h-3 border-2 border-[#58a6ff] border-t-transparent rounded-full animate-spin" />
-                      ) : (
-                        "⚙"
                       )}
                       {poc?.status === "running" ? "Generating PoC…" : "Gen PoC"}
                     </button>
