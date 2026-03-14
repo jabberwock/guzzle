@@ -182,7 +182,7 @@ export const useSession = create<SessionState>()(persist((set) => ({
     })),
   setSelectedLine: (line) => set({ selectedLine: line }),
   setFunctionSignature: (sig) => set({ functionSignature: sig }),
-  openWizard: () => set({
+  openWizard: () => set((s) => s.wizardOpen ? {} : {
     wizardOpen: true,
     wizardStep: "toolchain",
     compileLog: [],
