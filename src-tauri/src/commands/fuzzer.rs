@@ -81,13 +81,15 @@ pub async fn start_fuzzer(app: AppHandle, args: FuzzerArgs) -> Result<u32, Strin
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
 
-    // On Windows the ASAN dynamic runtime DLL lives in the same directory as
-    // clang.exe (or nearby). Prepend it to PATH so fuzzer.exe can find it.
+    // On Windows the ASAN dynamic runtime DLL lives under the LLVM installation
+    // at lib/clang/<version>/lib/windows/. Find it relative to clang.exe and
+    // prepend to PATH so fuzzer.exe can load it without requiring a system-wide
+    // PATH change.
     #[cfg(target_os = "windows")]
     if let Some(clang) = super::toolchain::find_best_clang() {
-        if let Some(clang_dir) = std::path::Path::new(&clang).parent() {
+        if let Some(rt_dir) = find_clang_rt_dir(&clang) {
             let current_path = std::env::var("PATH").unwrap_or_default();
-            cmd.env("PATH", format!("{};{current_path}", clang_dir.display()));
+            cmd.env("PATH", format!("{};{current_path}", rt_dir.display()));
         }
     }
 
@@ -263,6 +265,24 @@ pub(crate) fn parse_field_u64(line: &str, prefix: &str) -> Option<u64> {
         line.find(prefix)? + prefix.len()
     };
     line[start..].split_whitespace().next()?.split('/').next()?.parse().ok()
+}
+
+/// On Windows, find the directory containing clang_rt DLLs by walking up from
+/// clang.exe's location and globbing lib/clang/*/lib/windows/.
+#[cfg(target_os = "windows")]
+fn find_clang_rt_dir(clang_path: &str) -> Option<PathBuf> {
+    // clang.exe is typically at <root>/bin/clang.exe; root is one level up.
+    let root = std::path::Path::new(clang_path).parent()?.parent()?;
+    let lib_clang = root.join("lib").join("clang");
+    // Iterate version subdirectories and return the first that has lib/windows/
+    let entries = std::fs::read_dir(&lib_clang).ok()?;
+    for entry in entries.flatten() {
+        let candidate = entry.path().join("lib").join("windows");
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 #[cfg(test)]
