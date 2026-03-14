@@ -151,6 +151,9 @@ fn make_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         // AI responses (especially PoC scripts) can take a while — 5 min timeout.
         .timeout(std::time::Duration::from_secs(300))
+        // Send TCP keepalive probes every 30 s so NAT routers don't drop the
+        // connection while the AI server is generating a long response.
+        .tcp_keepalive(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {e}"))
 }
