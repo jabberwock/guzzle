@@ -138,7 +138,10 @@ Requirements:
    `"C:\\Temp\\guzzle_input"`. Do NOT write to the current directory.
    libFuzzer is single-threaded so there is no race condition.
 7. Do NOT add `#define _CRT_SECURE_NO_WARNINGS` — it is already passed as a compiler flag.
-8. Add a brief comment explaining the fuzzing strategy
+8. The harness is compiled as C++ (`clang++ -x c++`). Always cast the return value of
+   `malloc`/`realloc` to the target pointer type: `char *p = (char *)malloc(n);`
+   A bare `char *p = malloc(n);` is valid C but a compile error in C++.
+9. Add a brief comment explaining the fuzzing strategy
 
 Return ONLY the C/C++ source code, no markdown fences."#,
         func_name = signature.name
@@ -366,6 +369,14 @@ mod tests {
         let sig = dummy_sig("foo");
         let (_, user) = build_prompt(&sig, "");
         assert!(user.contains("LLVMFuzzerTestOneInput"));
+    }
+
+    #[test]
+    fn build_prompt_requires_malloc_cast() {
+        let sig = dummy_sig("foo");
+        let (_, user) = build_prompt(&sig, "");
+        // Prompt must tell the AI to cast malloc — harness is compiled as C++
+        assert!(user.contains("(char *)malloc") || user.contains("cast"));
     }
 
     #[test]
