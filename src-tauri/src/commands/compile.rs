@@ -84,6 +84,9 @@ pub async fn compile_harness(
 
     // Strip any #include lines that pull in one of the target files directly
     let harness_clean = strip_target_includes(&harness, &target_files);
+    // Inject `extern "C"` on any forward declarations of C target functions that
+    // are missing it — prevents C++ name-mangling from breaking the link step.
+    let harness_clean = fix_c_fn_linkage(&harness_clean, &target_files);
 
     // Build extern "C" forward declarations for C target functions.
     // Pass the harness so we can skip forward-declaring types the AI already defined.
@@ -214,6 +217,54 @@ pub async fn compile_harness(
     } else {
         Err(format!("Compilation failed with exit code {}", status.code().unwrap_or(-1)))
     }
+}
+
+/// Scan the harness for forward declarations of C target functions that are missing
+/// `extern "C"` linkage, and inject it.  This is needed because the harness is
+/// compiled as C++ but the target files are compiled as C — without `extern "C"`,
+/// C++ name-mangles the call site and the linker can't match the C symbol.
+///
+/// Example transform:
+///   `int ParseMessage(const uint8_t *buf, size_t len, Message *msg);`
+///   → `extern "C" int ParseMessage(const uint8_t *buf, size_t len, Message *msg);`
+pub fn fix_c_fn_linkage(harness: &str, target_files: &[String]) -> String {
+    // Collect the names of all non-static public functions in C target files.
+    let c_fn_names: std::collections::HashSet<String> = target_files.iter()
+        .filter(|f| f.ends_with(".c"))
+        .flat_map(|f| get_all_functions(f))
+        .filter(|sig| {
+            let ret = sig.return_type.trim();
+            !ret.starts_with("static ") && !ret.starts_with("static\t")
+        })
+        .map(|sig| sig.name)
+        .collect();
+
+    if c_fn_names.is_empty() {
+        return harness.to_string();
+    }
+
+    harness.lines().map(|line| {
+        let t = line.trim();
+        // Skip comments and lines already using extern "C"
+        if t.starts_with("//") || t.starts_with("/*") || t.contains("extern \"C\"") {
+            return line.to_string();
+        }
+        // Only consider forward declarations: end with ';', no '{'
+        if !t.ends_with(';') || t.contains('{') {
+            return line.to_string();
+        }
+        for name in &c_fn_names {
+            let Some(pos) = t.find(name.as_str()) else { continue };
+            if pos == 0 { continue; } // bare call statement
+            let before = t[..pos].trim();
+            // Must have a return type before the name, not an assignment or nested call
+            if before.is_empty() || before.contains('(') || before.contains('=') { continue; }
+            // Looks like a forward declaration of a C function — inject extern "C"
+            let indent = &line[..line.len() - line.trim_start().len()];
+            return format!("{indent}extern \"C\" {t}");
+        }
+        line.to_string()
+    }).collect::<Vec<_>>().join("\n")
 }
 
 pub fn strip_target_includes(harness: &str, target_files: &[String]) -> String {
@@ -378,6 +429,52 @@ pub fn build_extern_c_block(target_files: &[String], harness: &str) -> String {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    // --- strip_target_includes ---
+
+    #[test]
+    // --- fix_c_fn_linkage ---
+
+    #[test]
+    fn fix_linkage_adds_extern_c_to_bare_decl() {
+        // Regression: AI declares a C function without extern "C" — the C++ compiler
+        // name-mangles it and the linker can't find the C symbol.
+        let mut f = tempfile::Builder::new().suffix(".c").tempfile().unwrap();
+        writeln!(f, "int ParseMessage(const uint8_t *buf, size_t len) {{ return 0; }}").unwrap();
+        let path = f.path().to_string_lossy().to_string();
+
+        let harness = "int ParseMessage(const uint8_t *buf, size_t len);\n\
+                       extern \"C\" int LLVMFuzzerTestOneInput(const uint8_t *d, size_t s) { return 0; }\n";
+        let result = fix_c_fn_linkage(harness, &[path]);
+        assert!(result.contains("extern \"C\" int ParseMessage("),
+            "must inject extern \"C\" on the bare declaration");
+    }
+
+    #[test]
+    fn fix_linkage_leaves_already_extern_c_decl_alone() {
+        let mut f = tempfile::Builder::new().suffix(".c").tempfile().unwrap();
+        writeln!(f, "int foo(int x) {{ return x; }}").unwrap();
+        let path = f.path().to_string_lossy().to_string();
+
+        let harness = "extern \"C\" int foo(int x);\n";
+        let result = fix_c_fn_linkage(harness, &[path]);
+        // Should not double-wrap
+        assert!(!result.contains("extern \"C\" extern \"C\""));
+        assert!(result.contains("extern \"C\" int foo("));
+    }
+
+    #[test]
+    fn fix_linkage_does_not_touch_call_sites() {
+        let mut f = tempfile::Builder::new().suffix(".c").tempfile().unwrap();
+        writeln!(f, "int foo(int x) {{ return x; }}").unwrap();
+        let path = f.path().to_string_lossy().to_string();
+
+        // A call site should not get extern "C" prepended
+        let harness = "extern \"C\" int LLVMFuzzerTestOneInput(const uint8_t *d, size_t s) {\n    foo(1);\n    return 0;\n}\n";
+        let result = fix_c_fn_linkage(harness, &[path]);
+        assert!(!result.contains("extern \"C\" foo("),
+            "call sites must not be modified");
+    }
 
     // --- strip_target_includes ---
 

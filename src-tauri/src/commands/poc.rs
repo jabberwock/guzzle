@@ -4,7 +4,7 @@ use std::process::{Command, Stdio};
 use tauri::{AppHandle, Emitter};
 
 use super::ai::{call_ai, AiProvider};
-use super::compile::{build_extern_c_block, strip_target_includes};
+use super::compile::{build_extern_c_block, fix_c_fn_linkage, strip_target_includes};
 use super::parser::FunctionSignature;
 use super::toolchain::find_best_clang;
 
@@ -120,6 +120,7 @@ pub async fn generate_poc(
     // headers before it — the harness's own includes come after via harness_clean.
     let preamble = "#include <stdint.h>\n#include <stddef.h>\n#include <stdlib.h>\n#include <string.h>\n#include <stdio.h>\n";
     let harness_clean = strip_target_includes(&harness_source, &target_files);
+    let harness_clean = fix_c_fn_linkage(&harness_clean, &target_files);
     let extern_c_block = build_extern_c_block(&target_files, &harness_clean);
     let harness_final = format!("{preamble}{extern_c_block}{harness_clean}");
     let harness_path = temp_dir.join("poc_harness.cpp");
