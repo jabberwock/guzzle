@@ -430,9 +430,6 @@ mod tests {
     use super::*;
     use std::io::Write;
 
-    // --- strip_target_includes ---
-
-    #[test]
     // --- fix_c_fn_linkage ---
 
     #[test]
