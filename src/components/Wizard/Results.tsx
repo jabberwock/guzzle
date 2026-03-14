@@ -283,13 +283,23 @@ export default function Results({ onClose }: Props) {
                         }}
                       />
                     </div>
-                    <p className="text-[10px] text-[#8b949e]">
-                      Disable ASLR for reliable addresses:{" "}
-                      <code className="font-mono">echo 0 | sudo tee /proc/sys/kernel/randomize_va_space</code>
-                    </p>
-                    <p className="text-[10px] text-[#8b949e]">
-                      Note: Most useful for stack-buffer-overflow crashes. Heap/UAF/double-free won't yield a traditional ROP chain. Offsets and libc addresses usually need manual tuning.
-                    </p>
+                    <div className="bg-[#161b22] border border-[#30363d] rounded-md p-3 flex flex-col gap-2 text-[11px] text-[#8b949e]">
+                      <p className="text-[#e6edf3] font-semibold">How to use this script</p>
+                      <ol className="flex flex-col gap-1.5 list-decimal list-inside">
+                        <li>Save with the <span className="text-[#e6edf3]">Copy</span> button → <code className="font-mono">nano exploit.py</code> → paste</li>
+                        <li>Install pwntools if needed: <code className="font-mono">pip3 install pwntools</code></li>
+                        <li>Enable core dumps: <code className="font-mono">ulimit -c unlimited</code></li>
+                        <li>Disable ASLR: <code className="font-mono">echo 0 | sudo tee /proc/sys/kernel/randomize_va_space</code></li>
+                        <li>Run: <code className="font-mono">python3 exploit.py</code></li>
+                      </ol>
+                      <p className="mt-1">
+                        <span className="text-[#f0883e] font-medium">Exits with code 0?</span>{" "}
+                        The crash was caught by ASan but didn't produce a native SIGSEGV — common with small heap overflows.
+                        Confirm the bug is real by running with ASan:{" "}
+                        <code className="font-mono">clang++ -O0 -g -fsanitize=address harness.cpp target.c reproducer_main.c -o asan_repro && ./asan_repro crash_file</code>
+                      </p>
+                      <p>Most useful for <span className="text-[#e6edf3]">stack-buffer-overflow</span>. Heap/UAF/double-free won't yield a traditional ROP chain. Offsets and libc addresses usually need manual tuning.</p>
+                    </div>
                   </div>
                 )}
               </>
