@@ -262,20 +262,35 @@ pub fn build_extern_c_block(target_files: &[String]) -> String {
             .filter(|s| s.name != "main")
             .collect();
 
+        // Strip storage-class specifiers and qualifiers to get the bare type name.
+        // e.g. "static TlvField *" -> "TlvField"
+        let bare_type = |t: &str| -> String {
+            let mut s = t.trim();
+            for kw in &["static ", "extern ", "inline ", "volatile ", "const ",
+                        "static\t", "extern\t", "inline\t", "volatile\t", "const\t"] {
+                while s.starts_with(kw) {
+                    s = s[kw.len()..].trim();
+                }
+            }
+            s.trim_end_matches('*').trim()
+             .trim_end_matches("const").trim()
+             .trim_end_matches('*').trim()
+             .to_string()
+        };
+
         // Emit `typedef struct X X;` for any non-primitive pointer types.
         let primitive = |t: &str| {
-            let base = t.trim_end_matches('*').trim().trim_end_matches("const").trim();
-            matches!(base, "void"|"int"|"char"|"float"|"double"|"long"|"short"
-                        |"uint8_t"|"uint16_t"|"uint32_t"|"uint64_t"
-                        |"int8_t"|"int16_t"|"int32_t"|"int64_t"
-                        |"size_t"|"bool"|"unsigned"|"signed")
+            matches!(t, "void"|"int"|"char"|"float"|"double"|"long"|"short"
+                       |"uint8_t"|"uint16_t"|"uint32_t"|"uint64_t"
+                       |"int8_t"|"int16_t"|"int32_t"|"int64_t"
+                       |"size_t"|"bool"|"unsigned"|"signed")
         };
         for sig in &sigs {
             let all_types = std::iter::once(sig.return_type.as_str())
                 .chain(sig.params.iter().map(|p| p.type_name.as_str()));
             for t in all_types {
-                let base = t.trim_end_matches('*').trim().trim_start_matches("const").trim().to_string();
-                if !primitive(t) && !base.is_empty() && seen_types.insert(base.clone()) {
+                let base = bare_type(t);
+                if !base.is_empty() && !primitive(&base) && seen_types.insert(base.clone()) {
                     lines.push(format!("    typedef struct {base} {base};"));
                 }
             }
@@ -378,6 +393,20 @@ mod tests {
 
         let result = build_extern_c_block(&[path]);
         assert!(result.contains("typedef struct TlvField TlvField;"));
+    }
+
+    #[test]
+    fn extern_c_static_qualifier_stripped_from_typedef() {
+        // Functions with `static` return types (e.g. `static TlvField *parse(...)`)
+        // must not produce `typedef struct static TlvField static TlvField;`
+        let mut f = tempfile::Builder::new().suffix(".c").tempfile().unwrap();
+        writeln!(f, "typedef struct TlvField TlvField;").unwrap();
+        writeln!(f, "static TlvField *parse(const unsigned char *buf, int len) {{ return 0; }}").unwrap();
+        let path = f.path().to_string_lossy().to_string();
+
+        let result = build_extern_c_block(&[path]);
+        assert!(!result.contains("struct static"), "static must not appear inside typedef struct");
+        assert!(result.contains("typedef struct TlvField TlvField") || result.contains("TlvField"));
     }
 
     #[test]
