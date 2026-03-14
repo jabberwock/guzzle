@@ -206,9 +206,7 @@ pub async fn stop_fuzzer(pid: u32) -> Result<(), String> {
     let target = stored.unwrap_or(pid);
 
     #[cfg(unix)]
-    unsafe {
-        libc_kill(target as i32, 15); // SIGTERM
-    }
+    libc_kill(target as i32, 15); // SIGTERM
 
     #[cfg(windows)]
     {
@@ -326,6 +324,7 @@ pub(crate) fn parse_field_u64(line: &str, prefix: &str) -> Option<u64> {
 /// Find the directory containing clang_rt DLLs by walking up from clang's
 /// location and finding lib/clang/<version>/lib/windows/. Used on Windows
 /// to inject the runtime DLL directory into PATH before spawning the fuzzer.
+#[cfg(target_os = "windows")]
 fn find_clang_rt_dir(clang_path: &str) -> Option<PathBuf> {
     // clang.exe is typically at <root>/bin/clang.exe; root is one level up.
     let root = std::path::Path::new(clang_path).parent()?.parent()?;
@@ -494,6 +493,7 @@ mod tests {
 
     // --- find_clang_rt_dir ---
 
+    #[cfg(target_os = "windows")]
     #[test]
     fn clang_rt_dir_found_under_lib_clang_version() {
         let dir = tempfile::tempdir().unwrap();
@@ -508,6 +508,7 @@ mod tests {
         assert_eq!(result, Some(rt_dir));
     }
 
+    #[cfg(target_os = "windows")]
     #[test]
     fn clang_rt_dir_missing_returns_none() {
         let dir = tempfile::tempdir().unwrap();
@@ -518,6 +519,7 @@ mod tests {
         assert_eq!(find_clang_rt_dir(&clang_path), None);
     }
 
+    #[cfg(target_os = "windows")]
     #[test]
     fn clang_rt_dir_no_parent_returns_none() {
         assert_eq!(find_clang_rt_dir("clang"), None);
