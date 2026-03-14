@@ -218,10 +218,9 @@ async fn call_openai_compat(
         return Err(format!("{} API error {status}: {body}", provider.name));
     }
 
-    let oai: OaiResponse = resp
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse response: {e}"))?;
+    let body = resp.text().await.map_err(|e| format!("Failed to read response body: {e}"))?;
+    let oai: OaiResponse = serde_json::from_str(&body)
+        .map_err(|e| format!("Failed to parse response: {e}\nRaw body: {body}"))?;
 
     oai.choices
         .into_iter()
@@ -260,10 +259,9 @@ async fn call_anthropic(
         return Err(format!("Anthropic API error {status}: {body}"));
     }
 
-    let ar: AnthropicResponse = resp
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse Anthropic response: {e}"))?;
+    let body = resp.text().await.map_err(|e| format!("Failed to read Anthropic response body: {e}"))?;
+    let ar: AnthropicResponse = serde_json::from_str(&body)
+        .map_err(|e| format!("Failed to parse Anthropic response: {e}\nRaw body: {body}"))?;
 
     let text = ar
         .content
