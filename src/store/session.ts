@@ -182,17 +182,30 @@ export const useSession = create<SessionState>()(persist((set) => ({
     })),
   setSelectedLine: (line) => set({ selectedLine: line }),
   setFunctionSignature: (sig) => set({ functionSignature: sig }),
-  openWizard: () => set((s) => s.wizardOpen ? {} : {
-    wizardOpen: true,
-    wizardStep: "toolchain",
-    compileLog: [],
-    fuzzerOutput: [],
-    fuzzerStats: null,
-    crashes: [],
-    compiledBinaryPath: null,
+  openWizard: () => set((s) => {
+    if (s.wizardOpen) {
+      console.warn("[guzzle] openWizard() called while wizard already open — ignoring", new Error().stack);
+      return {};
+    }
+    console.log("[guzzle] openWizard()");
+    return {
+      wizardOpen: true,
+      wizardStep: "toolchain",
+      compileLog: [],
+      fuzzerOutput: [],
+      fuzzerStats: null,
+      crashes: [],
+      compiledBinaryPath: null,
+    };
   }),
-  closeWizard: () => set({ wizardOpen: false }),
-  setWizardStep: (step) => set({ wizardStep: step }),
+  closeWizard: () => {
+    console.log("[guzzle] closeWizard()", new Error().stack);
+    set({ wizardOpen: false });
+  },
+  setWizardStep: (step) => {
+    console.log("[guzzle] setWizardStep()", step);
+    set({ wizardStep: step });
+  },
   setToolchainInfo: (info) => set({ toolchainInfo: info }),
   setHarnessSource: (src) => set({ harnessSource: src }),
   setHarnessGenerating: (v) => set({ harnessGenerating: v }),
