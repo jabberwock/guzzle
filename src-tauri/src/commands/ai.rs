@@ -139,8 +139,8 @@ Requirements:
    libFuzzer is single-threaded so there is no race condition.
 7. Do NOT add `#define _CRT_SECURE_NO_WARNINGS` — it is already passed as a compiler flag.
 8. The harness is compiled as C++ (`clang++ -x c++`). Always cast the return value of
-   `malloc`/`realloc` to the target pointer type: `char *p = (char *)malloc(n);`
-   A bare `char *p = malloc(n);` is valid C but a compile error in C++.
+   `malloc`/`realloc` to the target pointer type, e.g. `MyType *p = (MyType *)malloc(n);`
+   A bare `T *p = malloc(n);` is valid C but a compile error in C++.
 9. Add a brief comment explaining the fuzzing strategy
 
 Return ONLY the C/C++ source code, no markdown fences."#,
