@@ -346,7 +346,7 @@ pub(crate) fn parse_field_u64(line: &str, prefix: &str) -> Option<u64> {
     } else {
         line.find(prefix)? + prefix.len()
     };
-    line[start..].split_whitespace().next()?.split('/').next()?.parse().ok()
+    line[start..].split_whitespace().next()?.trim_end_matches(':').split('/').next()?.parse().ok()
 }
 
 /// Find the directory containing clang_rt DLLs by walking up from clang's
@@ -377,6 +377,22 @@ mod tests {
     #[test]
     fn field_u64_hash_prefix() {
         assert_eq!(parse_field_u64("#1234 cov: 567", "#"), Some(1234));
+    }
+
+    #[test]
+    fn field_u64_hash_prefix_fork_mode_colon() {
+        // Fork mode emits "#3: cov: ..." — the colon must be stripped before parsing.
+        assert_eq!(parse_field_u64("#3: cov: 0 ft: 0 corp: 0 exec/s: 0", "#"), Some(3));
+    }
+
+    #[test]
+    fn parse_fuzzer_stats_fork_mode_line() {
+        let line = "#3: cov: 12 ft: 15 corp: 4 exec/s: 128 oom/timeout/crash: 0/0/1 time: 2s job: 1 dft_time: 0";
+        let stats = parse_fuzzer_stats(line).expect("should parse fork mode stat line");
+        assert_eq!(stats.total_execs, 3);
+        assert_eq!(stats.coverage, 12);
+        assert_eq!(stats.corpus_size, 4);
+        assert_eq!(stats.execs_per_sec, 128);
     }
 
     #[test]
