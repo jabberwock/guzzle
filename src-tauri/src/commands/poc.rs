@@ -135,7 +135,7 @@ pub async fn generate_poc(
         .and_then(|p| p.parent()) // .guzzle/
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| std::env::temp_dir().join("guzzle_poc"));
-    let reproducer_path = guzzle_dir.join("reproducer");
+    let reproducer_path = guzzle_dir.join(if cfg!(windows) { "reproducer.exe" } else { "reproducer" });
 
     // Detect if any C target file defines main() — rename it to avoid conflict
     let target_has_main = target_files.iter()
@@ -145,9 +145,68 @@ pub async fn generate_poc(
             src.contains("int main(") || src.contains("int main (")
         });
 
+    // -Dmain=__guzzle_target_main is a global preprocessor flag — if passed in a
+    // single clang invocation it renames main in reproducer_main.c too, causing a
+    // duplicate symbol. Fix: pre-compile any target C file that defines main() into
+    // an object file (with the rename), then link the object instead of the source.
+    let mut precompiled_objs: Vec<PathBuf> = Vec::new();
+    for tf in &target_files {
+        if !target_has_main || !tf.ends_with(".c") { continue; }
+        let src = std::fs::read_to_string(tf).unwrap_or_default();
+        if !src.contains("int main(") && !src.contains("int main (") { continue; }
+
+        let stem = PathBuf::from(tf)
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "target".to_string());
+        let obj_path = temp_dir.join(format!("{stem}.o"));
+
+        let mut obj_cmd = Command::new(&clang);
+        obj_cmd.args(["-O0", "-g", "-c", "-Dmain=__guzzle_target_main"]);
+        #[cfg(target_os = "windows")]
+        obj_cmd.arg("-D_CRT_SECURE_NO_WARNINGS");
+        for inc in &includes { obj_cmd.arg(format!("-I{inc}")); }
+        obj_cmd.arg("-x").arg("c").arg(tf);
+        obj_cmd.arg("-o").arg(&obj_path);
+        obj_cmd.stdout(Stdio::piped());
+        obj_cmd.stderr(Stdio::piped());
+
+        let args_display = obj_cmd.get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+            .join(" ");
+        emit(&app, format!("      [pre-compile] $ {clang} {args_display}"));
+
+        let mut obj_child = obj_cmd.spawn()
+            .map_err(|e| format!("Failed to spawn clang for pre-compile: {e}"))?;
+        let obj_stderr = obj_child.stderr.take().unwrap();
+        let obj_stdout = obj_child.stdout.take().unwrap();
+        let app_pre = app.clone();
+        let t1 = tokio::task::spawn_blocking(move || {
+            BufReader::new(obj_stderr).lines().map_while(Result::ok)
+                .for_each(|l| emit(&app_pre, format!("      {l}")));
+        });
+        let app_pre2 = app.clone();
+        let t2 = tokio::task::spawn_blocking(move || {
+            BufReader::new(obj_stdout).lines().map_while(Result::ok)
+                .for_each(|l| emit(&app_pre2, format!("      {l}")));
+        });
+        let obj_status = tokio::task::spawn_blocking(move || obj_child.wait())
+            .await.map_err(|e| format!("join: {e}"))?
+            .map_err(|e| format!("wait: {e}"))?;
+        let _ = t1.await;
+        let _ = t2.await;
+        if !obj_status.success() {
+            return Err(format!("Pre-compile of {tf} failed (exit {}). Check poc_log.", obj_status.code().unwrap_or(-1)));
+        }
+        precompiled_objs.push(obj_path);
+    }
+
     let mut cmd = Command::new(&clang);
     // No sanitizers — we want real crashes, not ASan-caught ones
     cmd.args(["-O0", "-no-pie", "-fno-stack-protector", "-g"]);
+    #[cfg(target_os = "windows")]
+    cmd.arg("-D_CRT_SECURE_NO_WARNINGS");
 
     for inc in &includes {
         cmd.arg(format!("-I{inc}"));
@@ -157,19 +216,31 @@ pub async fn generate_poc(
     cmd.arg("-x").arg("c++");
     cmd.arg(harness_path.to_str().unwrap());
 
-    // Target files in their native language
+    // Target files — skip ones we pre-compiled to objects
+    let precompiled_sources: std::collections::HashSet<&str> =
+        if precompiled_objs.is_empty() { Default::default() }
+        else { target_files.iter().filter(|f| f.ends_with(".c") && {
+            let src = std::fs::read_to_string(f).unwrap_or_default();
+            src.contains("int main(") || src.contains("int main (")
+        }).map(|s| s.as_str()).collect() };
+
     for tf in &target_files {
+        if precompiled_sources.contains(tf.as_str()) { continue; }
         let lang = if tf.ends_with(".c") { "c" } else { "c++" };
-        cmd.arg("-x").arg(lang);
-        if target_has_main && tf.ends_with(".c") {
-            cmd.arg("-Dmain=__guzzle_target_main");
-        }
-        cmd.arg(tf);
+        cmd.arg("-x").arg(lang).arg(tf);
     }
 
-    // reproducer_main.c as C
+    // reproducer_main.c as C — no -D rename, so its main() stays as main()
     cmd.arg("-x").arg("c");
     cmd.arg(main_path.to_str().unwrap());
+
+    // Pre-compiled object files (no -x)
+    if !precompiled_objs.is_empty() {
+        cmd.arg("-x").arg("none");
+        for obj in &precompiled_objs {
+            cmd.arg(obj);
+        }
+    }
 
     // Pre-built libraries
     if !library_files.is_empty() {
@@ -317,4 +388,32 @@ Return ONLY the Python3 source code, no markdown fences."#
     emit(&app, "      PoC script generated ✓");
 
     Ok(script)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reproducer_binary_name_has_exe_on_windows() {
+        let name = if cfg!(windows) { "reproducer.exe" } else { "reproducer" };
+        if cfg!(windows) {
+            assert!(name.ends_with(".exe"));
+        } else {
+            assert!(!name.contains('.'));
+        }
+    }
+
+    #[test]
+    fn reproducer_main_contains_llvm_entry_point() {
+        assert!(REPRODUCER_MAIN.contains("LLVMFuzzerTestOneInput"));
+        assert!(REPRODUCER_MAIN.contains("int main("));
+    }
+
+    #[test]
+    fn reproducer_main_no_main_rename_define() {
+        // REPRODUCER_MAIN must never contain the rename macro — that would
+        // defeat the purpose of the two-pass pre-compile workaround.
+        assert!(!REPRODUCER_MAIN.contains("__guzzle_target_main"));
+    }
 }
