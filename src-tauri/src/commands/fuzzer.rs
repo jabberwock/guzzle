@@ -73,6 +73,10 @@ pub async fn start_fuzzer(app: AppHandle, args: FuzzerArgs) -> Result<u32, Strin
     cmd.arg(format!("-artifact_prefix={}{}", crash_dir.to_string_lossy(), std::path::MAIN_SEPARATOR));
 
 
+    // Keep fuzzing after crashes so multiple crash inputs are collected.
+    // libFuzzer's default is to stop on the first crash.
+    cmd.arg("-keep_going=1000000000");
+
     if args.max_total_time > 0 {
         cmd.arg(format!("-max_total_time={}", args.max_total_time));
     }
@@ -455,6 +459,13 @@ mod tests {
             .unwrap_or(usize::MAX);
         assert!(cd_pos < cfg_win_pos,
             "cmd.current_dir(&crash_dir) must appear before the Windows-only ASAN_OPTIONS block");
+    }
+
+    #[test]
+    fn fuzzer_keep_going_flag_present() {
+        let src = include_str!("fuzzer.rs");
+        assert!(src.contains("-keep_going="),
+            "-keep_going must be passed so the fuzzer continues after the first crash");
     }
 
     // --- read_crash_files sorting ---
