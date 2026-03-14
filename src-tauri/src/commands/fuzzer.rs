@@ -76,9 +76,9 @@ pub async fn start_fuzzer(app: AppHandle, args: FuzzerArgs) -> Result<u32, Strin
     cmd.arg("-fork=1");
     cmd.arg("-ignore_crashes=1");
 
-    if args.max_total_time > 0 {
-        cmd.arg(format!("-max_total_time={}", args.max_total_time));
-    }
+    // Do not pass -max_total_time to the fuzzer — in fork mode the parent passes
+    // its own incremented -max_total_time to each child, which overrides ours.
+    // The Rust watchdog below is the sole enforcer of the user's timeout.
     if args.jobs > 1 {
         cmd.arg(format!("-jobs={}", args.jobs));
     }
