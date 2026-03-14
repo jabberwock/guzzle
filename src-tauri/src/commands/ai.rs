@@ -147,9 +147,17 @@ Return ONLY the C/C++ source code, no markdown fences."#,
     (system, user)
 }
 
+fn make_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        // AI responses (especially PoC scripts) can take a while — 5 min timeout.
+        .timeout(std::time::Duration::from_secs(300))
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {e}"))
+}
+
 /// Generic AI call — used by both harness generation and PoC generation.
 pub async fn call_ai(provider: &AiProvider, system: String, user: String) -> Result<String, String> {
-    let client = reqwest::Client::new();
+    let client = make_client()?;
     match provider.format {
         ApiFormat::Openai => call_openai_compat(&client, provider, system, user).await,
         ApiFormat::Anthropic => call_anthropic(&client, provider, system, user).await,
@@ -165,7 +173,7 @@ pub async fn generate_harness(
     context_lines: String,
 ) -> Result<String, String> {
     let (system, user) = build_prompt(&signature, &context_lines);
-    let client = reqwest::Client::new();
+    let client = make_client()?;
 
     let raw = match provider.format {
         ApiFormat::Openai => call_openai_compat(&client, &provider, system, user).await,
@@ -299,5 +307,90 @@ pub async fn load_api_key(provider_name: String) -> Result<Option<String>, Strin
         Ok(key) => Ok(Some(key)),
         Err(keyring::Error::NoEntry) => Ok(None),
         Err(e) => Err(format!("Keyring error: {e}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dummy_sig(name: &str) -> FunctionSignature {
+        FunctionSignature {
+            name: name.to_string(),
+            return_type: "int".to_string(),
+            params: vec![],
+            start_line: 1,
+            end_line: 5,
+        }
+    }
+
+    #[test]
+    fn build_prompt_contains_function_name() {
+        let sig = dummy_sig("ProcessImage");
+        let (system, user) = build_prompt(&sig, "// context");
+        assert!(user.contains("ProcessImage"));
+        assert!(!system.is_empty());
+    }
+
+    #[test]
+    fn build_prompt_contains_context() {
+        let sig = dummy_sig("foo");
+        let (_, user) = build_prompt(&sig, "int foo() {}");
+        assert!(user.contains("int foo() {}"));
+    }
+
+    #[test]
+    fn build_prompt_no_markdown_fences_in_system() {
+        let sig = dummy_sig("foo");
+        let (system, _) = build_prompt(&sig, "");
+        // System prompt should instruct to omit markdown fences
+        assert!(system.contains("no markdown"));
+    }
+
+    #[test]
+    fn build_prompt_includes_llvmfuzzer_requirement() {
+        let sig = dummy_sig("foo");
+        let (_, user) = build_prompt(&sig, "");
+        assert!(user.contains("LLVMFuzzerTestOneInput"));
+    }
+
+    #[test]
+    fn build_prompt_no_posix_headers_required() {
+        let sig = dummy_sig("foo");
+        let (_, user) = build_prompt(&sig, "");
+        // Prompt must not require POSIX-only headers without Windows guard
+        assert!(user.contains("unistd.h") == false || user.contains("_WIN32"));
+    }
+
+    #[test]
+    fn make_client_succeeds() {
+        make_client().expect("reqwest client with 5-min timeout should build successfully");
+    }
+
+    #[test]
+    fn oai_response_deserializes() {
+        let json = r#"{"choices":[{"message":{"role":"assistant","content":"hello"}}]}"#;
+        let r: OaiResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(r.choices[0].message.content, "hello");
+    }
+
+    #[test]
+    fn anthropic_response_deserializes() {
+        let json = r#"{"content":[{"type":"text","text":"hello"}]}"#;
+        let r: AnthropicResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(r.content[0].block_type, "text");
+        assert_eq!(r.content[0].text.as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn anthropic_response_ignores_non_text_blocks() {
+        let json = r#"{"content":[{"type":"thinking","thinking":"chain"},{"type":"text","text":"result"}]}"#;
+        let r: AnthropicResponse = serde_json::from_str(json).unwrap();
+        let text: String = r.content.into_iter()
+            .filter(|b| b.block_type == "text")
+            .filter_map(|b| b.text)
+            .collect::<Vec<_>>()
+            .join("");
+        assert_eq!(text, "result");
     }
 }
