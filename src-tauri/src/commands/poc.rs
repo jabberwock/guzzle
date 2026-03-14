@@ -300,6 +300,7 @@ pub async fn generate_poc(
         ));
     }
     emit(&app, format!("      Compiled: {}", reproducer_path.display()));
+    emit(&app, format!("      Run it as: {} <crash_file>", reproducer_path.display()));
 
     // ── Step 4: Verify crash reproduces ──────────────────────────────────────
     emit(&app, "[ 4/5 ] Verifying crash reproduces…");
@@ -372,7 +373,8 @@ Target function: {func_sig}
 Crash input (first 64 bytes hex): {hex_preview}
 Crash input size: {crash_size} bytes
 Binary: compiled with -no-pie -O0 -fno-stack-protector, NX enabled, no ASan
-Reproducer invocation: ./reproducer {crash_path}
+Reproducer binary: {reproducer_path}
+Reproducer invocation: {reproducer_path} {crash_path}
 
 Available ROP gadgets:
 {gadgets}
@@ -386,7 +388,8 @@ Generate a complete pwntools Python3 exploit script that:
 Note: ASLR may be enabled. Suggest disabling with:
   echo 0 | sudo tee /proc/sys/kernel/randomize_va_space
 
-Return ONLY the Python3 source code, no markdown fences."#
+Return ONLY the Python3 source code, no markdown fences."#,
+        reproducer_path = reproducer_path.display(),
     );
 
     let script = call_ai(&provider, system, user).await?;
