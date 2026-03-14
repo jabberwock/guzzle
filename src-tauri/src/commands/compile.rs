@@ -106,7 +106,7 @@ pub async fn compile_harness(
         // Also save a copy of the harness next to the binary for inspection
         let _ = std::fs::copy(&harness_path, guzzle_dir.join("harness.cpp"));
 
-        guzzle_dir.join("fuzzer").to_string_lossy().to_string()
+        guzzle_dir.join(if cfg!(windows) { "fuzzer.exe" } else { "fuzzer" }).to_string_lossy().to_string()
     } else {
         settings.out_path.clone()
     };
