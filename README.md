@@ -2,7 +2,7 @@
 
 **libFuzzer made easy.** Open a C/C++ file, click a function, and fuzz it in minutes — no harness writing, no compiler flags to memorise.
 
-Guzzle wraps [libFuzzer](https://llvm.org/docs/LibFuzzer.html) in a desktop GUI that handles harness generation (via AI), compilation, and live fuzzing output. It works on source files or pre-built libraries.
+Guzzle wraps [libFuzzer](https://llvm.org/docs/LibFuzzer.html) in a desktop GUI that handles harness generation (via AI), compilation, live fuzzing, crash triage, and exploit scaffolding. It works on source files or pre-built libraries.
 
 ![Guzzle screenshot](screenshot.png)
 
@@ -12,9 +12,11 @@ Guzzle wraps [libFuzzer](https://llvm.org/docs/LibFuzzer.html) in a desktop GUI 
 
 - Click any function in a C/C++ file to fuzz it
 - AI-generated harness (DeepSeek, Claude, OpenAI, Ollama, or any OpenAI-compatible API)
+- Harness caching — re-open a function instantly without a new AI call
 - Compile with ASan + UBSan in one click
 - Live fuzzer output, coverage stats, and crash detection
 - Crash hex dump + reproduce command
+- **Gen PoC** — compiles a standalone reproducer, extracts ROP gadgets, and uses AI to generate a pwntools exploit scaffold
 - Library mode — link against pre-built `.a`/`.so`/`.dylib` to fuzz third-party libraries
 
 ---
@@ -56,7 +58,7 @@ sudo apt install -y \
 sudo apt install -y clang llvm lld
 ```
 
-Verify libFuzzer is available (note: `-fsanitize=fuzzer` requires a `LLVMFuzzerTestOneInput` entry point, not `main`):
+Verify libFuzzer is available:
 
 ```bash
 echo '#include <stdint.h>
@@ -229,7 +231,8 @@ npm run tauri build
 
 ---
 
-## Usage
+<details>
+<summary><strong>Usage</strong></summary>
 
 ### Fuzzing a function in a source file
 
@@ -237,16 +240,15 @@ npm run tauri build
 2. Click any line inside a function — a banner appears with the detected signature
 3. Click **Fuzz this function →** to open the wizard
 4. **Toolchain** — Guzzle checks your clang install automatically
-5. **Harness** — AI generates a fuzzing harness; review and edit it if needed
+5. **Harness** — AI generates a fuzzing harness; review and edit it if needed. Previously accepted harnesses load instantly from cache.
 6. **Compile** — select sanitizers (ASan on by default) and compile
 7. **Fuzzing** — watch live output; crashes appear as they're found
-8. **Results** — view crash hex dumps and the reproduce command
+8. **Results** — view crash hex dumps, the reproduce command, and optionally generate a PoC script
 
 ### Fuzzing a library (e.g. OpenSSL, libpng)
 
 1. Pre-compile the library with fuzzer instrumentation:
    ```bash
-   # Example for a generic library
    CC=clang CFLAGS="-fsanitize=fuzzer-no-link,address" ./configure
    make
    ```
@@ -255,11 +257,39 @@ npm run tauri build
 4. Add the header directory to **Include Paths**
 5. Compile and fuzz as normal
 
+### Generating a PoC / exploit script
+
+After a crash is found, select it in the Results panel and click **Gen PoC**. This:
+
+1. Compiles a standalone reproducer binary (no libFuzzer, no sanitizers, `-no-pie -fno-stack-protector`)
+2. Verifies the crash reproduces
+3. Extracts ROP gadgets with `ROPgadget` or `ropper` (must be installed: `pip3 install ROPgadget`)
+4. Calls AI to generate a pwntools Python3 exploit scaffold
+
+**To run the generated script:**
+
+```bash
+pip3 install pwntools          # if needed
+ulimit -c unlimited            # enable core dumps
+echo 0 | sudo tee /proc/sys/kernel/randomize_va_space  # disable ASLR
+python3 exploit.py
+```
+
+> **Exits with code 0?** The crash was caught by ASan but didn't produce a native SIGSEGV — common with small heap overflows. Confirm the bug is real with:
+> ```bash
+> clang++ -O0 -g -fsanitize=address harness.cpp target.c reproducer_main.c -o asan_repro
+> ./asan_repro .guzzle/crashes/crash-<hash>
+> ```
+> The pwntools script is most useful for **stack-buffer-overflow** crashes. Heap/UAF/double-free won't yield a traditional ROP chain, and offsets/libc addresses usually need manual tuning.
+
+</details>
+
 ---
 
-## AI Providers
+<details>
+<summary><strong>AI Providers</strong></summary>
 
-Guzzle supports multiple AI backends for harness generation:
+Guzzle supports multiple AI backends for harness generation and PoC scripting:
 
 | Provider | Notes |
 |---|---|
@@ -271,21 +301,38 @@ Guzzle supports multiple AI backends for harness generation:
 
 API keys are stored in your OS keychain (Keychain on macOS, Secret Service on Linux, Credential Manager on Windows).
 
+</details>
+
 ---
 
-## How it works
+<details>
+<summary><strong>How it works</strong></summary>
 
 1. **Parsing** — [tree-sitter](https://tree-sitter.github.io/) extracts the function signature at your cursor
-2. **Harness generation** — the AI receives the signature + surrounding code context and writes a `LLVMFuzzerTestOneInput` harness
+2. **Harness generation** — the AI receives the signature + surrounding code context and writes a `LLVMFuzzerTestOneInput` harness; accepted harnesses are cached in `.guzzle/harness_cache.json` keyed by file hash + function name
 3. **Compilation** — Guzzle injects a preamble (`exit()` intercept) and postamble, then compiles harness + target with `clang++ -fsanitize=fuzzer,address`
 4. **Fuzzing** — the compiled binary is run as a libFuzzer target; output is streamed live
 5. **Crash detection** — crash files are watched in `.guzzle/crashes/` and shown in the Results panel
+6. **PoC generation** — a sanitizer-free reproducer is compiled, ROP gadgets extracted, and AI generates a pwntools exploit scaffold
 
-Corpus and crashes are saved in `.guzzle/` next to your source file.
+Corpus and crashes are saved in `.guzzle/` next to your source file:
+
+```
+.guzzle/
+  fuzzer             # compiled fuzzer binary
+  reproducer         # standalone crash reproducer (no ASan)
+  corpus/            # fuzzer-generated test cases
+  crashes/           # crash inputs
+  harness.cpp        # the harness as compiled
+  harness_cache.json # cached AI-generated harnesses
+```
+
+</details>
 
 ---
 
-## Contributing
+<details>
+<summary><strong>Contributing</strong></summary>
 
 PRs and issues welcome. A few ground rules:
 
@@ -314,7 +361,10 @@ PRs and issues welcome. A few ground rules:
 **libFuzzer note**
 When writing tests or verify commands, always use `LLVMFuzzerTestOneInput` as the entry point — never `int main()`. libFuzzer provides its own `main()` and the linker will reject a file that defines both.
 
+</details>
+
+---
+
 ## Special Thanks to:
 
 - ryan_ (for the AGENT idea, making this a GUI or all-in-one CLI experience)
-
