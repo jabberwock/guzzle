@@ -81,6 +81,16 @@ pub async fn start_fuzzer(app: AppHandle, args: FuzzerArgs) -> Result<u32, Strin
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
 
+    // On Windows the ASAN dynamic runtime DLL lives in the same directory as
+    // clang.exe (or nearby). Prepend it to PATH so fuzzer.exe can find it.
+    #[cfg(target_os = "windows")]
+    if let Some(clang) = super::toolchain::find_best_clang() {
+        if let Some(clang_dir) = std::path::Path::new(&clang).parent() {
+            let current_path = std::env::var("PATH").unwrap_or_default();
+            cmd.env("PATH", format!("{};{current_path}", clang_dir.display()));
+        }
+    }
+
     let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn fuzzer: {e}"))?;
     let pid = child.id();
 
