@@ -45,8 +45,9 @@ export default function FuzzerRunning({ onBack, onNext }: Props) {
   } = useSession();
 
   const startedRef = useRef(false);
-  const [running, setRunning] = useState(true);
+  const [running, setRunning] = useState(false);
   const [seedDir, setSeedDir] = useState<string | null>(null);
+  const [timeoutSecs, setTimeoutSecs] = useState(5);
 
   const defaultCorpusDir = filePath
     ? filePath.replace(/[/\\][^/\\]+$/, "") + "/.guzzle/corpus"
@@ -107,7 +108,7 @@ export default function FuzzerRunning({ onBack, onNext }: Props) {
       const pid = await startFuzzer({
         binary: compiledBinaryPath,
         corpus_dir: corpusDir,
-        max_total_time: 0,
+        max_total_time: timeoutSecs,
         jobs: 1,
       });
       setFuzzerPid(pid);
@@ -117,12 +118,6 @@ export default function FuzzerRunning({ onBack, onNext }: Props) {
     }
   };
 
-  useEffect(() => {
-    if (startedRef.current) return;
-    startedRef.current = true;
-    startFuzzing();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const handleStop = async () => {
     if (fuzzerPid) {
@@ -154,6 +149,18 @@ export default function FuzzerRunning({ onBack, onNext }: Props) {
           >
             + Seed corpus
           </button>
+          <div className="flex items-center gap-1.5">
+            <label className="text-xs text-[#8b949e]">Timeout</label>
+            <input
+              type="number"
+              min={0}
+              value={timeoutSecs}
+              onChange={(e) => setTimeoutSecs(Math.max(0, parseInt(e.target.value) || 0))}
+              disabled={running}
+              className="w-14 bg-[#161b22] border border-[#30363d] rounded px-2 py-0.5 text-xs text-[#e6edf3] font-mono focus:outline-none focus:border-[#58a6ff] disabled:opacity-50"
+            />
+            <span className="text-xs text-[#8b949e]">sec (0=∞)</span>
+          </div>
           {running ? (
             <div className="flex items-center gap-2">
               <div className="w-2 h-2 bg-[#3fb950] rounded-full animate-pulse" />
@@ -195,7 +202,15 @@ export default function FuzzerRunning({ onBack, onNext }: Props) {
           ← Back
         </button>
         <div className="flex gap-2">
-          {!running && (
+          {!running && !startedRef.current && (
+            <button
+              onClick={() => { startedRef.current = true; startFuzzing(); }}
+              className="px-4 py-2 bg-[#238636] hover:bg-[#2ea043] text-white text-sm font-medium rounded-md transition-colors"
+            >
+              ▶ Start Fuzzing
+            </button>
+          )}
+          {!running && startedRef.current && (
             <button
               onClick={onNext}
               className="px-4 py-2 bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] text-[#e6edf3] text-sm font-medium rounded-md transition-colors"

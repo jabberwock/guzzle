@@ -72,6 +72,9 @@ pub async fn start_fuzzer(app: AppHandle, args: FuzzerArgs) -> Result<u32, Strin
     // Append the platform separator so libFuzzer sees a clean directory prefix
     cmd.arg(format!("-artifact_prefix={}{}", crash_dir.to_string_lossy(), std::path::MAIN_SEPARATOR));
 
+    // Continue past the first crash and collect all unique inputs.
+    cmd.arg("-fork=1");
+    cmd.arg("-ignore_crashes=1");
 
     if args.max_total_time > 0 {
         cmd.arg(format!("-max_total_time={}", args.max_total_time));
@@ -107,6 +110,11 @@ pub async fn start_fuzzer(app: AppHandle, args: FuzzerArgs) -> Result<u32, Strin
             cmd.env("PATH", format!("{};{current_path}", rt_dir.display()));
         }
     }
+
+    // Put the fuzzer in its own process group so stop_fuzzer can kill all
+    // forked children with a single group-kill (PGID == child PID).
+    #[cfg(unix)]
+    { use std::os::unix::process::CommandExt; cmd.process_group(0); }
 
     let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn fuzzer: {e}"))?;
     let pid = child.id();
@@ -159,12 +167,30 @@ pub async fn start_fuzzer(app: AppHandle, args: FuzzerArgs) -> Result<u32, Strin
         }
     });
 
+    // Watchdog: kill the process group after max_total_time seconds.
+    // libFuzzer's own -max_total_time is unreliable in fork mode, so we
+    // enforce the timeout from the Rust side as well.
+    if args.max_total_time > 0 {
+        let timeout_secs = args.max_total_time;
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(timeout_secs)).await;
+            #[cfg(unix)]
+            libc_kill(-(pid as i32), 15); // SIGTERM to process group
+            #[cfg(windows)]
+            { let _ = Command::new("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"]).output(); }
+        });
+    }
+
     // Wait for process and emit stopped event
     let app_done = app.clone();
     let seen_done = seen_crashes.clone();
     let crash_dir_done = crash_dir.clone();
     tokio::task::spawn_blocking(move || {
         let _ = child.wait();
+        // Fork mode leaves child processes running after the parent exits naturally
+        // (e.g. max_total_time). Kill the entire process group to clean them up.
+        #[cfg(unix)]
+        libc_kill(-(pid as i32), 9); // SIGKILL to process group
         // On Windows, emit ASAN log file contents (ASAN bypasses the stderr pipe)
         #[cfg(target_os = "windows")]
         {
@@ -205,13 +231,15 @@ pub async fn stop_fuzzer(pid: u32) -> Result<(), String> {
     let stored = *FUZZER_PID.lock().unwrap();
     let target = stored.unwrap_or(pid);
 
+    // Negative PID kills the entire process group (PGID == PID set via process_group(0)).
     #[cfg(unix)]
-    libc_kill(target as i32, 15); // SIGTERM
+    libc_kill(-(target as i32), 15); // SIGTERM to process group
 
+    // /T kills the process tree so forked children are also terminated.
     #[cfg(windows)]
     {
         let _ = Command::new("taskkill")
-            .args(["/PID", &target.to_string(), "/F"])
+            .args(["/PID", &target.to_string(), "/T", "/F"])
             .output();
     }
 
@@ -455,6 +483,33 @@ mod tests {
             .unwrap_or(usize::MAX);
         assert!(cd_pos < cfg_win_pos,
             "cmd.current_dir(&crash_dir) must appear before the Windows-only ASAN_OPTIONS block");
+    }
+
+    #[test]
+    fn fuzzer_fork_and_ignore_crashes_flags_present() {
+        let src = include_str!("fuzzer.rs");
+        assert!(src.contains("\"-fork=1\""),
+            "-fork=1 must be passed so libFuzzer continues past crashes");
+        assert!(src.contains("\"-ignore_crashes=1\""),
+            "-ignore_crashes=1 must be passed so libFuzzer collects multiple crashes");
+    }
+
+    #[test]
+    fn fuzzer_stop_kills_process_group_on_unix() {
+        let src = include_str!("fuzzer.rs");
+        // process_group(0) makes the child its own group leader (PGID == PID).
+        assert!(src.contains("process_group(0)"),
+            "fuzzer must be started with process_group(0) on Unix");
+        // Negative PID in kill() targets the entire process group.
+        assert!(src.contains("-(target as i32)"),
+            "stop_fuzzer must kill the process group (negative pid) on Unix");
+    }
+
+    #[test]
+    fn fuzzer_stop_kills_tree_on_windows() {
+        let src = include_str!("fuzzer.rs");
+        assert!(src.contains("\"/T\""),
+            "taskkill must use /T to kill the process tree on Windows");
     }
 
     // --- read_crash_files sorting ---
