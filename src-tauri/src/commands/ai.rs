@@ -155,6 +155,17 @@ fn make_client() -> Result<reqwest::Client, String> {
         .map_err(|e| format!("Failed to build HTTP client: {e}"))
 }
 
+fn fmt_err(e: &reqwest::Error) -> String {
+    use std::error::Error;
+    let mut msg = e.to_string();
+    let mut src = e.source();
+    while let Some(cause) = src {
+        msg.push_str(&format!(" → {cause}"));
+        src = cause.source();
+    }
+    msg
+}
+
 /// Generic AI call — used by both harness generation and PoC generation.
 pub async fn call_ai(provider: &AiProvider, system: String, user: String) -> Result<String, String> {
     let client = make_client()?;
@@ -218,10 +229,10 @@ async fn call_openai_compat(
     let resp = req
         .send()
         .await
-        .map_err(|e| format!("HTTP error: {e}"))?;
+        .map_err(|e| format!("HTTP error: {}", fmt_err(&e)))?;
 
     let status = resp.status();
-    let bytes = resp.bytes().await.map_err(|e| format!("Failed to read response body: {e}"))?;
+    let bytes = resp.bytes().await.map_err(|e| format!("Failed to read response body: {}", fmt_err(&e)))?;
     let body = String::from_utf8_lossy(&bytes).to_string();
 
     if !status.is_success() {
@@ -364,7 +375,7 @@ mod tests {
 
     #[test]
     fn make_client_succeeds() {
-        make_client().expect("reqwest client with 5-min timeout should build successfully");
+        make_client().expect("reqwest client with 5-min timeout and gzip disabled should build successfully");
     }
 
     #[test]
