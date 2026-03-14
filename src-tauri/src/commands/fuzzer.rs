@@ -301,9 +301,9 @@ pub(crate) fn parse_field_u64(line: &str, prefix: &str) -> Option<u64> {
     line[start..].split_whitespace().next()?.split('/').next()?.parse().ok()
 }
 
-/// On Windows, find the directory containing clang_rt DLLs by walking up from
-/// clang.exe's location and globbing lib/clang/*/lib/windows/.
-#[cfg(target_os = "windows")]
+/// Find the directory containing clang_rt DLLs by walking up from clang's
+/// location and finding lib/clang/<version>/lib/windows/. Used on Windows
+/// to inject the runtime DLL directory into PATH before spawning the fuzzer.
 fn find_clang_rt_dir(clang_path: &str) -> Option<PathBuf> {
     // clang.exe is typically at <root>/bin/clang.exe; root is one level up.
     let root = std::path::Path::new(clang_path).parent()?.parent()?;
@@ -413,5 +413,36 @@ mod tests {
     #[test]
     fn crash_filename_crash_no_dash() {
         assert!(!is_crash_filename("crash"));
+    }
+
+    // --- find_clang_rt_dir ---
+
+    #[test]
+    fn clang_rt_dir_found_under_lib_clang_version() {
+        let dir = tempfile::tempdir().unwrap();
+        // Simulate <root>/bin/clang and <root>/lib/clang/17/lib/windows/
+        let bin_dir = dir.path().join("bin");
+        let rt_dir = dir.path().join("lib").join("clang").join("17").join("lib").join("windows");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        std::fs::create_dir_all(&rt_dir).unwrap();
+        let clang_path = bin_dir.join("clang").to_string_lossy().to_string();
+
+        let result = find_clang_rt_dir(&clang_path);
+        assert_eq!(result, Some(rt_dir));
+    }
+
+    #[test]
+    fn clang_rt_dir_missing_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin_dir = dir.path().join("bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        let clang_path = bin_dir.join("clang").to_string_lossy().to_string();
+
+        assert_eq!(find_clang_rt_dir(&clang_path), None);
+    }
+
+    #[test]
+    fn clang_rt_dir_no_parent_returns_none() {
+        assert_eq!(find_clang_rt_dir("clang"), None);
     }
 }

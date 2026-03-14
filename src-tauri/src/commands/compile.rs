@@ -416,4 +416,14 @@ mod tests {
         assert!(!HARNESS_PREAMBLE.contains("_CRT_SECURE_NO_WARNINGS"),
             "_CRT_SECURE_NO_WARNINGS must be a compiler flag, not in the preamble");
     }
+
+    #[test]
+    fn fuzzer_binary_name_has_exe_on_windows() {
+        let name = if cfg!(windows) { "fuzzer.exe" } else { "fuzzer" };
+        if cfg!(windows) {
+            assert!(name.ends_with(".exe"));
+        } else {
+            assert!(!name.contains('.'));
+        }
+    }
 }
