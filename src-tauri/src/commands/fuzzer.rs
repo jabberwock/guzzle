@@ -81,6 +81,15 @@ pub async fn start_fuzzer(app: AppHandle, args: FuzzerArgs) -> Result<u32, Strin
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
 
+    // On Windows, ASAN writes its report directly to the console handle,
+    // bypassing the stderr pipe. Force it to a log file instead so we can
+    // read and display it.
+    #[cfg(target_os = "windows")]
+    {
+        let log_path = crash_dir.join("asan.log");
+        cmd.env("ASAN_OPTIONS", format!("log_path={}", log_path.display()));
+    }
+
     // On Windows the ASAN dynamic runtime DLL lives under the LLVM installation
     // at lib/clang/<version>/lib/windows/. Find it relative to clang.exe and
     // prepend to PATH so fuzzer.exe can load it without requiring a system-wide
@@ -150,6 +159,31 @@ pub async fn start_fuzzer(app: AppHandle, args: FuzzerArgs) -> Result<u32, Strin
     let crash_dir_done = crash_dir.clone();
     tokio::task::spawn_blocking(move || {
         let _ = child.wait();
+        // On Windows, emit ASAN log file contents (ASAN bypasses the stderr pipe)
+        #[cfg(target_os = "windows")]
+        {
+            let log_path = crash_dir_done.join("asan.log");
+            // ASAN appends the PID to the filename: asan.log.<pid>
+            if let Ok(entries) = std::fs::read_dir(&crash_dir_done) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name();
+                    let name = name.to_string_lossy();
+                    if name.starts_with("asan.log") {
+                        if let Ok(contents) = std::fs::read_to_string(entry.path()) {
+                            for line in contents.lines() {
+                                let _ = app_done.emit("fuzzer_output", line);
+                            }
+                        }
+                    }
+                }
+            }
+            // Also try the exact path in case ASAN didn't append PID
+            if let Ok(contents) = std::fs::read_to_string(&log_path) {
+                for line in contents.lines() {
+                    let _ = app_done.emit("fuzzer_output", line);
+                }
+            }
+        }
         // Final crash scan after process exits
         emit_new_crashes(&crash_dir_done, &app_done, &seen_done);
         let _ = app_done.emit("fuzzer_stopped", ());
