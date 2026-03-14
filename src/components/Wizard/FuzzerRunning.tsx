@@ -78,7 +78,7 @@ export default function FuzzerRunning({ onBack, onNext }: Props) {
     unlistenOutput = await listen<string>("fuzzer_output", (e) => {
       outputBuffer.push(e.payload);
     });
-    unlistenCrash = await listen<{ path: string; size: number; preview_bytes: number[] }>(
+    unlistenCrash = await listen<{ path: string; size: number; preview_bytes: number[]; modified_secs: number }>(
       "fuzzer_crash",
       (e) => {
         setCrashes([...crashes, e.payload]);
