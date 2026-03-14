@@ -297,6 +297,13 @@ pub fn build_extern_c_block(target_files: &[String]) -> String {
         }
 
         for sig in &sigs {
+            // Skip static functions — they have internal linkage and can't be
+            // called from outside the translation unit, so declaring them in
+            // an extern "C" block would be both wrong and unnecessary.
+            let ret = sig.return_type.trim();
+            if ret.starts_with("static ") || ret.starts_with("static\t") {
+                continue;
+            }
             let params: Vec<String> = sig.params.iter().map(|p| {
                 if p.param_name.is_empty() {
                     p.type_name.clone()
@@ -306,7 +313,7 @@ pub fn build_extern_c_block(target_files: &[String]) -> String {
             }).collect();
             lines.push(format!(
                 "    {} {}({});",
-                sig.return_type, sig.name, params.join(", ")
+                ret, sig.name, params.join(", ")
             ));
         }
     }
