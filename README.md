@@ -313,3 +313,8 @@ PRs and issues welcome. A few ground rules:
 
 **libFuzzer note**
 When writing tests or verify commands, always use `LLVMFuzzerTestOneInput` as the entry point — never `int main()`. libFuzzer provides its own `main()` and the linker will reject a file that defines both.
+
+## Special Thanks to:
+
+- ryan_ (for the AGENT idea, making this a GUI or all-in-one CLI experience)
+
