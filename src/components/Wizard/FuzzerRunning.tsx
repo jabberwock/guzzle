@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useRef, useState } from "react";
 import { useSession } from "../../store/session";
 import { startFuzzer, stopFuzzer } from "../../lib/tauri";
 import { listen } from "@tauri-apps/api/event";
