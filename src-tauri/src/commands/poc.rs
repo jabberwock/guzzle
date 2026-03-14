@@ -115,10 +115,13 @@ pub async fn generate_poc(
     std::fs::write(&main_path, REPRODUCER_MAIN)
         .map_err(|e| format!("Failed to write reproducer_main.c: {e}"))?;
 
-    // Prepare harness: strip direct target includes, prepend extern "C" block
+    // Prepare harness: strip direct target includes, prepend extern "C" block.
+    // The extern "C" block uses uint8_t / size_t etc., so inject the standard
+    // headers before it — the harness's own includes come after via harness_clean.
+    let preamble = "#include <stdint.h>\n#include <stddef.h>\n#include <stdlib.h>\n#include <string.h>\n#include <stdio.h>\n";
     let harness_clean = strip_target_includes(&harness_source, &target_files);
     let extern_c_block = build_extern_c_block(&target_files);
-    let harness_final = format!("{extern_c_block}{harness_clean}");
+    let harness_final = format!("{preamble}{extern_c_block}{harness_clean}");
     let harness_path = temp_dir.join("poc_harness.cpp");
     std::fs::write(&harness_path, &harness_final)
         .map_err(|e| format!("Failed to write poc_harness.cpp: {e}"))?;
