@@ -305,6 +305,7 @@ pub async fn generate_poc(
     emit(&app, "[ 4/5 ] Verifying crash reproduces…");
     let verify = Command::new(reproducer_path.to_str().unwrap())
         .arg(&crash_path)
+        .current_dir(&temp_dir)
         .output();
 
     match verify {
@@ -419,5 +420,22 @@ mod tests {
         // REPRODUCER_MAIN must never contain the rename macro — that would
         // defeat the purpose of the two-pass pre-compile workaround.
         assert!(!REPRODUCER_MAIN.contains("__guzzle_target_main"));
+    }
+
+    #[test]
+    fn reproducer_verify_uses_temp_dir_not_src_tauri() {
+        // This is a static analysis guard: the verification Command must call
+        // current_dir so the harness can't write temp files to the cargo cwd
+        // (src-tauri/), which would trigger Tauri's file watcher and restart
+        // the app. We verify the source contains the expected call.
+        let src = include_str!("poc.rs");
+        // Find the verify block and confirm current_dir appears before .output()
+        let verify_pos = src.find("let verify = Command::new").expect("verify block not found");
+        let output_pos = src[verify_pos..].find(".output()").expect(".output() not found") + verify_pos;
+        let current_dir_pos = src[verify_pos..].find(".current_dir(&temp_dir)").map(|p| p + verify_pos);
+        assert!(
+            current_dir_pos.map_or(false, |p| p < output_pos),
+            "reproducer verify Command must set current_dir before .output()"
+        );
     }
 }

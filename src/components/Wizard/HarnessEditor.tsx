@@ -37,6 +37,7 @@ export default function HarnessEditor({ onBack, onNext }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [userEdited, setUserEdited] = useState(false);
   const [fromCache, setFromCache] = useState(false);
+  const [cacheChecking, setCacheChecking] = useState(!harnessSource);
   const [savingKey, setSavingKey] = useState(false);
   const [saveKeyError, setSaveKeyError] = useState<string | null>(null);
 
@@ -142,7 +143,10 @@ export default function HarnessEditor({ onBack, onNext }: Props) {
             generate();
           }
         })
-        .catch(() => generate());
+        .catch(() => generate())
+        .finally(() => setCacheChecking(false));
+    } else {
+      setCacheChecking(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -292,11 +296,11 @@ export default function HarnessEditor({ onBack, onNext }: Props) {
       )}
 
       <div className="rounded-lg overflow-hidden border border-[#30363d]" style={{ height: 280 }}>
-        {harnessGenerating && !harnessSource ? (
+        {(cacheChecking || harnessGenerating) && !harnessSource ? (
           <div className="flex items-center justify-center h-full bg-[#0d1117] gap-3">
             <div className="w-5 h-5 border-2 border-[#58a6ff] border-t-transparent rounded-full animate-spin" />
             <span className="text-sm text-[#8b949e]">
-              Generating via {PROVIDER_LABELS[provider.name] ?? provider.name}…
+              {cacheChecking ? "Checking cache…" : `Generating via ${PROVIDER_LABELS[provider.name] ?? provider.name}…`}
             </span>
           </div>
         ) : (

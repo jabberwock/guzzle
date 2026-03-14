@@ -83,16 +83,18 @@ pub async fn start_fuzzer(app: AppHandle, args: FuzzerArgs) -> Result<u32, Strin
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
 
+    // Always run the fuzzer from crash_dir so any relative-path file writes
+    // from the harness land there instead of in src-tauri/ (the cargo cwd),
+    // which would trigger Tauri's dev file watcher and restart the app.
+    cmd.current_dir(&crash_dir);
+
     // On Windows, ASAN writes its report directly to the console handle,
     // bypassing the stderr pipe. Force it to a log file instead so we can
     // read and display it. We can't use a full path in ASAN_OPTIONS because
     // the drive letter colon (C:\...) is parsed as an option separator — so
-    // set the working directory to the crash dir and use a bare filename.
+    // use a bare filename (resolves relative to crash_dir, set above).
     #[cfg(target_os = "windows")]
-    {
-        cmd.current_dir(&crash_dir);
-        cmd.env("ASAN_OPTIONS", "log_path=asan.log");
-    }
+    cmd.env("ASAN_OPTIONS", "log_path=asan.log");
 
     // On Windows the ASAN dynamic runtime DLL lives under the LLVM installation
     // at lib/clang/<version>/lib/windows/. Find it relative to clang.exe and
@@ -433,6 +435,27 @@ mod tests {
     #[test]
     fn crash_filename_crash_no_dash() {
         assert!(!is_crash_filename("crash"));
+    }
+
+    #[test]
+    fn fuzzer_current_dir_is_set_for_all_platforms() {
+        // Static guard: the start_fuzzer source must call cmd.current_dir
+        // unconditionally (not just inside a #[cfg(windows)] block) so that
+        // the fuzzer binary never inherits src-tauri/ as its cwd and can't
+        // write temp files there.
+        let src = include_str!("fuzzer.rs");
+        // Find the spawn_fuzzer section — look for the unconditional current_dir call.
+        // It must appear OUTSIDE any cfg(target_os="windows") guard.
+        let cd_pos = src.find("cmd.current_dir(&crash_dir)")
+            .expect("cmd.current_dir(&crash_dir) must exist in fuzzer.rs");
+        // The unconditional call must NOT be preceded by a cfg(target_os="windows") on the same logical block.
+        // A simple heuristic: the line containing it should not itself be inside the windows-only block,
+        // which ends with the env("ASAN_OPTIONS") line. We verify by checking that there IS a
+        // current_dir call before any Windows-cfg block.
+        let cfg_win_pos = src.find("#[cfg(target_os = \"windows\")]\n    cmd.env(\"ASAN_OPTIONS\"")
+            .unwrap_or(usize::MAX);
+        assert!(cd_pos < cfg_win_pos,
+            "cmd.current_dir(&crash_dir) must appear before the Windows-only ASAN_OPTIONS block");
     }
 
     // --- read_crash_files sorting ---

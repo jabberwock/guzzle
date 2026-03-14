@@ -183,11 +183,7 @@ export const useSession = create<SessionState>()(persist((set) => ({
   setSelectedLine: (line) => set({ selectedLine: line }),
   setFunctionSignature: (sig) => set({ functionSignature: sig }),
   openWizard: () => set((s) => {
-    if (s.wizardOpen) {
-      console.warn("[guzzle] openWizard() called while wizard already open — ignoring", new Error().stack);
-      return {};
-    }
-    console.log("[guzzle] openWizard()");
+    if (s.wizardOpen) return {};
     return {
       wizardOpen: true,
       wizardStep: "toolchain",
@@ -198,14 +194,8 @@ export const useSession = create<SessionState>()(persist((set) => ({
       compiledBinaryPath: null,
     };
   }),
-  closeWizard: () => {
-    console.log("[guzzle] closeWizard()", new Error().stack);
-    set({ wizardOpen: false });
-  },
-  setWizardStep: (step) => {
-    console.log("[guzzle] setWizardStep()", step);
-    set({ wizardStep: step });
-  },
+  closeWizard: () => set({ wizardOpen: false }),
+  setWizardStep: (step) => set({ wizardStep: step }),
   setToolchainInfo: (info) => set({ toolchainInfo: info }),
   setHarnessSource: (src) => set({ harnessSource: src }),
   setHarnessGenerating: (v) => set({ harnessGenerating: v }),
