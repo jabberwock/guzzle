@@ -81,6 +81,7 @@ fn emit(app: &AppHandle, msg: impl Into<String>) {
 }
 
 #[tauri::command]
+#[cfg_attr(not(target_os = "linux"), allow(unused_variables, unreachable_code))]
 pub async fn generate_poc(
     app: AppHandle,
     crash_path: String,
