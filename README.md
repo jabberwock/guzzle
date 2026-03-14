@@ -275,6 +275,16 @@ echo 0 | sudo tee /proc/sys/kernel/randomize_va_space  # disable ASLR
 python3 exploit.py
 ```
 
+Gen PoC only makes sense on heap/stack overflow crashes, not leaks. The crash types and what you can do with them:
+
+| Prefix | Type | Exploitable? |
+|--------|------|--------------|
+| crash-   | SIGSEGV / heap-buffer-overflow | Yes — try Gen PoC       |
+| stack-   | Stack overflow                 | Sometimes               |
+| leak-    | Memory leak                    | No — nothing to exploit |
+| oom-     | Out of memory                  | No                      |
+| timeout- | Hung                           | No                      |
+
 > **Exits with code 0?** The crash was caught by ASan but didn't produce a native SIGSEGV — common with small heap overflows. Confirm the bug is real with:
 > ```bash
 > clang++ -O0 -g -fsanitize=address harness.cpp target.c reproducer_main.c -o asan_repro
