@@ -227,11 +227,11 @@ export default function Results({ onClose }: Props) {
                       {poc?.status === "running" ? "Generating PoC…" : "Gen PoC"}
                     </button>
                     <span className="text-[10px] text-[#8b949e]">
-                      Requires <code className="font-mono">ROPgadget</code> or <code className="font-mono">ropper</code>
+                      Linux only · Requires <code className="font-mono">ROPgadget</code> or <code className="font-mono">ropper</code>
                     </span>
                   </div>
                   <p className="text-[10px] text-[#8b949e]">
-                    Uses AI ({aiProvider.name}) to generate a pwntools exploit script — same provider and API key as harness generation.
+                    Uses AI ({aiProvider.name}) to generate a pwntools exploit script (Linux only) — same provider and API key as harness generation.
                   </p>
                 </div>
 

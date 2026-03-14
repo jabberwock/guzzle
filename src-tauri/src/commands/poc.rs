@@ -80,38 +80,6 @@ fn emit(app: &AppHandle, msg: impl Into<String>) {
     let _ = app.emit("poc_log", msg.into());
 }
 
-fn platform_name() -> &'static str {
-    #[cfg(target_os = "linux")]   { "Linux" }
-    #[cfg(target_os = "macos")]   { "macOS" }
-    #[cfg(target_os = "windows")] { "Windows" }
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-    { "Unknown" }
-}
-
-/// Tells the AI how to set pwntools context for this platform.
-/// context.binary only works for ELF; on macOS/Windows the binary is Mach-O/PE.
-fn context_binary_note() -> &'static str {
-    #[cfg(target_os = "linux")]
-    { "Use `context.binary = ELF(reproducer_path)` to set arch/bits automatically." }
-    #[cfg(target_os = "macos")]
-    { "The binary is Mach-O (macOS). Do NOT call `context.binary` — \
-pwntools only parses ELF and will raise ELFError. \
-Instead set `context.arch = 'amd64'` and `context.os = 'linux'` directly." }
-    #[cfg(target_os = "windows")]
-    { "The binary is a Windows PE. Do NOT call `context.binary` — \
-pwntools only parses ELF and will raise ELFError. \
-Instead set `context.arch = 'amd64'` and `context.os = 'linux'` directly." }
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-    { "Set `context.arch = 'amd64'` and `context.os = 'linux'` directly." }
-}
-
-fn aslr_note() -> &'static str {
-    #[cfg(target_os = "linux")]
-    { "Note: ASLR may be enabled. Disable with:\n  echo 0 | sudo tee /proc/sys/kernel/randomize_va_space" }
-    #[cfg(not(target_os = "linux"))]
-    { "Note: ASLR is enabled by default on this platform. Disable it via your debugger or system settings if needed." }
-}
-
 #[tauri::command]
 pub async fn generate_poc(
     app: AppHandle,
@@ -124,6 +92,12 @@ pub async fn generate_poc(
     provider: AiProvider,
     function_signature: FunctionSignature,
 ) -> Result<String, String> {
+    // PoC generation depends on pwntools and Linux-specific tools (ROPgadget,
+    // core dump analysis). Gate hard here rather than generating a broken script.
+    #[cfg(not(target_os = "linux"))]
+    return Err("PoC generation is only supported on Linux. \
+        pwntools, core dump analysis, and ROP tooling require a Linux environment.".to_string());
+
     // ── Step 1: Check for ROP tool ──────────────────────────────────────────
     emit(&app, "[ 1/5 ] Checking for ROP gadget tool…");
     let rop_tool = find_rop_tool().ok_or_else(|| {
@@ -411,7 +385,6 @@ Crash input size: {crash_size} bytes
 Binary: compiled with -no-pie -O0 -fno-stack-protector, NX enabled, no ASan
 Reproducer binary: {reproducer_path}
 Reproducer invocation: {reproducer_path} {crash_path}
-Host platform: {platform}
 
 Available ROP gadgets:
 {gadgets}
@@ -422,15 +395,11 @@ Generate a complete pwntools Python3 exploit script that:
 3. If ret/pop gadgets and a libc path are available, attempt ret2libc to call system("/bin/sh")
 4. Includes comments explaining each step and any manual steps needed (e.g. finding libc base)
 
-{context_binary_note}
-
-{aslr_note}
+Note: ASLR may be enabled. Suggest disabling with:
+  echo 0 | sudo tee /proc/sys/kernel/randomize_va_space
 
 Return ONLY the Python3 source code, no markdown fences."#,
         reproducer_path = reproducer_path.display(),
-        platform = platform_name(),
-        context_binary_note = context_binary_note(),
-        aslr_note = aslr_note(),
     );
 
     let script = call_ai(&provider, system, user).await?;
@@ -466,47 +435,17 @@ mod tests {
         assert!(!REPRODUCER_MAIN.contains("__guzzle_target_main"));
     }
 
+    /// Guard that the Linux-only gate is never accidentally removed.
     #[test]
-    fn platform_name_is_nonempty() {
-        assert!(!platform_name().is_empty());
-    }
-
-    #[test]
-    fn context_binary_note_is_nonempty() {
-        assert!(!context_binary_note().is_empty());
-    }
-
-    /// On non-Linux platforms the note must not instruct the AI to assign context.binary,
-    /// since the binary is not ELF and pwntools will raise ELFError.
-    #[test]
-    #[cfg(not(target_os = "linux"))]
-    fn context_binary_note_no_elf_call_on_non_linux() {
-        // The note may mention "context.binary" in a "do NOT" warning, but must
-        // not contain the assignment form that would tell the AI to actually use it.
+    fn poc_generation_gated_to_linux() {
+        let src = include_str!("poc.rs");
         assert!(
-            !context_binary_note().contains("context.binary = "),
-            "context_binary_note must not instruct context.binary assignment on non-Linux"
+            src.contains("#[cfg(not(target_os = \"linux\"))]"),
+            "generate_poc must have a #[cfg(not(target_os = \"linux\"))] early-return gate"
         );
-    }
-
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn context_binary_note_uses_elf_on_linux() {
-        assert!(context_binary_note().contains("context.binary"));
-    }
-
-    #[test]
-    fn aslr_note_is_nonempty() {
-        assert!(!aslr_note().is_empty());
-    }
-
-    /// /proc path is Linux-only — must not appear in the note on other platforms.
-    #[test]
-    #[cfg(not(target_os = "linux"))]
-    fn aslr_note_no_proc_on_non_linux() {
         assert!(
-            !aslr_note().contains("/proc/sys"),
-            "aslr_note must not reference /proc/sys on non-Linux"
+            src.contains("only supported on Linux"),
+            "the Linux gate error message must mention 'only supported on Linux'"
         );
     }
 
