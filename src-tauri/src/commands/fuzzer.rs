@@ -83,11 +83,13 @@ pub async fn start_fuzzer(app: AppHandle, args: FuzzerArgs) -> Result<u32, Strin
 
     // On Windows, ASAN writes its report directly to the console handle,
     // bypassing the stderr pipe. Force it to a log file instead so we can
-    // read and display it.
+    // read and display it. We can't use a full path in ASAN_OPTIONS because
+    // the drive letter colon (C:\...) is parsed as an option separator — so
+    // set the working directory to the crash dir and use a bare filename.
     #[cfg(target_os = "windows")]
     {
-        let log_path = crash_dir.join("asan.log");
-        cmd.env("ASAN_OPTIONS", format!("log_path={}", log_path.display()));
+        cmd.current_dir(&crash_dir);
+        cmd.env("ASAN_OPTIONS", "log_path=asan.log");
     }
 
     // On Windows the ASAN dynamic runtime DLL lives under the LLVM installation
