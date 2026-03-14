@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useSession } from "../../store/session";
 import StepIndicator from "../shared/StepIndicator";
 import ToolchainCheck from "./ToolchainCheck";
@@ -5,11 +6,21 @@ import HarnessEditor from "./HarnessEditor";
 import CompileSettings from "./CompileSettings";
 import FuzzerRunning from "./FuzzerRunning";
 import Results from "./Results";
+import type { FunctionSignature } from "../../store/session";
 
 export default function Wizard() {
   const { wizardOpen, wizardStep, setWizardStep, closeWizard, functionSignature } = useSession();
 
-  if (!wizardOpen || !functionSignature) return null;
+  // Lock the signature at open time so the background Monaco editor's cursor
+  // events (which temporarily null out functionSignature during re-parses)
+  // don't unmount and reset the wizard mid-session.
+  const [lockedSig, setLockedSig] = useState<FunctionSignature | null>(functionSignature);
+  useEffect(() => {
+    if (functionSignature) setLockedSig(functionSignature);
+    if (!wizardOpen) setLockedSig(null);
+  }, [wizardOpen, functionSignature]);
+
+  if (!wizardOpen || !lockedSig) return null;
 
   const goTo = (step: typeof wizardStep) => setWizardStep(step);
 
@@ -24,7 +35,7 @@ export default function Wizard() {
           <div className="flex items-center gap-3">
             <span className="text-lg">⚡</span>
             <span className="font-semibold text-[#e6edf3]">Fuzz Wizard</span>
-            <span className="text-sm text-[#8b949e]">— {functionSignature.name}()</span>
+            <span className="text-sm text-[#8b949e]">— {lockedSig.name}()</span>
           </div>
           <button
             onClick={closeWizard}
