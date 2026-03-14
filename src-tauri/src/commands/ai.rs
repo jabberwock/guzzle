@@ -133,7 +133,9 @@ Requirements:
      Use only headers from the C/C++ standard library.
 5. Do NOT call exit() or abort()
 6. Do NOT use `mkstemp`, `_mktemp_s`, or any platform-specific temp file API.
-   If the function requires a file path, write to a fixed filename like `"__guzzle_tmp"` —
+   If the function requires a file path, use a fixed path inside the system temp directory:
+   `"/tmp/guzzle_input"` on Linux/macOS, or wrap with `#ifdef _WIN32` to use
+   `"C:\\Temp\\guzzle_input"`. Do NOT write to the current directory.
    libFuzzer is single-threaded so there is no race condition.
 7. Do NOT add `#define _CRT_SECURE_NO_WARNINGS` — it is already passed as a compiler flag.
 8. Add a brief comment explaining the fuzzing strategy
