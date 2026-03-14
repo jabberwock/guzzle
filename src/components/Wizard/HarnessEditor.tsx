@@ -332,6 +332,8 @@ export default function HarnessEditor({ onBack, onNext }: Props) {
         </button>
         <button
           onClick={() => {
+            // Commit provider (including loaded API key) to store so Results.tsx has it
+            setAiProvider(provider);
             if (filePath && functionSignature && harnessSource) {
               void saveCachedHarness(filePath, functionSignature.name, harnessSource);
             }
