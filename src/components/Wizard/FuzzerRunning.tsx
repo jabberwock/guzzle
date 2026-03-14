@@ -42,6 +42,7 @@ export default function FuzzerRunning({ onBack, onNext }: Props) {
     clearFuzzerOutput,
     setFuzzerStats,
     setCrashes,
+    appendCrash,
   } = useSession();
 
   const startedRef = useRef(false);
@@ -82,7 +83,7 @@ export default function FuzzerRunning({ onBack, onNext }: Props) {
     unlistenCrash = await listen<{ path: string; size: number; preview_bytes: number[]; modified_secs: number }>(
       "fuzzer_crash",
       (e) => {
-        setCrashes([...crashes, e.payload]);
+        appendCrash(e.payload);
       }
     );
     let lastStats = 0;

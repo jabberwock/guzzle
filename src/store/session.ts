@@ -144,6 +144,7 @@ interface SessionState {
   clearFuzzerOutput: () => void;
   setFuzzerStats: (stats: FuzzerStats | null) => void;
   setCrashes: (crashes: CrashFile[]) => void;
+  appendCrash: (crash: CrashFile) => void;
   setAiProvider: (provider: AiProvider) => void;
 }
 
@@ -211,6 +212,7 @@ export const useSession = create<SessionState>()(persist((set) => ({
   clearFuzzerOutput: () => set({ fuzzerOutput: [] }),
   setFuzzerStats: (stats) => set({ fuzzerStats: stats ?? null }),
   setCrashes: (crashes) => set({ crashes }),
+  appendCrash: (crash) => set((state) => ({ crashes: [...state.crashes, crash] })),
   setAiProvider: (provider) => set({ aiProvider: provider }),
 }), {
   name: "guzzle-session",
