@@ -235,6 +235,32 @@ pub fn strip_target_includes(harness: &str, target_files: &[String]) -> String {
 /// Catches both:
 ///   typedef struct TypeName { ... } TypeName;   (named)
 ///   typedef struct { ... } TypeName;             (anonymous)
+/// Returns true if `harness` already contains a forward declaration or definition
+/// of a function named `func_name`.  Matches lines of the form:
+///   ReturnType func_name(...);    ← forward declaration
+///   ReturnType func_name(...) {   ← definition
+/// but NOT call sites like `func_name(...)` or `result = func_name(...)`.
+fn harness_declares_fn(harness: &str, func_name: &str) -> bool {
+    harness.lines().any(|line| {
+        let t = line.trim();
+        if t.starts_with("//") || t.starts_with("/*") { return false; }
+        // The function name must appear in the line
+        let Some(pos) = t.find(func_name) else { return false };
+        if pos == 0 { return false; } // bare call at start of statement
+        let before = &t[..pos];
+        let bt = before.trim();
+        // Must have something before (return type), not be a keyword-only prefix,
+        // and must not be an assignment or nested call
+        !bt.is_empty()
+            && !matches!(bt, "return" | "if" | "while" | "else")
+            && !bt.ends_with("return")
+            && !bt.ends_with("if")
+            && !bt.ends_with("while")
+            && !bt.contains('=')
+            && !bt.contains('(')
+    })
+}
+
 fn harness_defines_type(harness: &str, type_name: &str) -> bool {
     // The closing `} TypeName;` token is the reliable marker for both patterns.
     harness.contains(&format!("}} {};", type_name))
@@ -321,6 +347,12 @@ pub fn build_extern_c_block(target_files: &[String], harness: &str) -> String {
             // an extern "C" block would be both wrong and unnecessary.
             let ret = sig.return_type.trim();
             if ret.starts_with("static ") || ret.starts_with("static\t") {
+                continue;
+            }
+            // Skip if the harness already declares this function — re-declaring
+            // it here would place the declaration before the parameter types are
+            // defined (types come from harness_clean which follows extern_c_block).
+            if harness_declares_fn(harness, &sig.name) {
                 continue;
             }
             let params: Vec<String> = sig.params.iter().map(|p| {
@@ -439,6 +471,23 @@ mod tests {
         // Function declaration should still appear
         // The format is "ReturnType FuncName(" — there may be a space before the name
         assert!(result.contains("parse("), "function declaration must still be emitted");
+    }
+
+    #[test]
+    fn extern_c_skips_fn_already_declared_in_harness() {
+        // Regression: AI harness includes its own `int ParseMessage(...);` forward
+        // declaration. build_extern_c_block must not re-declare it, because the
+        // re-declaration would precede the type definitions that come from harness_clean,
+        // causing "unknown type name 'Message'" errors.
+        let mut f = tempfile::Builder::new().suffix(".c").tempfile().unwrap();
+        writeln!(f, "int ParseMessage(const uint8_t *buf, size_t len, Message *msg) {{ return 0; }}").unwrap();
+        let path = f.path().to_string_lossy().to_string();
+
+        let harness = "typedef struct { int n; } Message;\nint ParseMessage(const uint8_t *buf, size_t len, Message *msg);\n";
+        let result = build_extern_c_block(&[path], harness);
+        // Harness already declares ParseMessage — extern_c_block must not add another
+        assert!(!result.contains("ParseMessage"),
+            "must not re-declare a function the harness already declares");
     }
 
     #[test]
