@@ -212,13 +212,14 @@ async fn call_openai_compat(
         .await
         .map_err(|e| format!("HTTP error: {e}"))?;
 
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
+    let status = resp.status();
+    let bytes = resp.bytes().await.map_err(|e| format!("Failed to read response body: {e}"))?;
+    let body = String::from_utf8_lossy(&bytes).to_string();
+
+    if !status.is_success() {
         return Err(format!("{} API error {status}: {body}", provider.name));
     }
 
-    let body = resp.text().await.map_err(|e| format!("Failed to read response body: {e}"))?;
     let oai: OaiResponse = serde_json::from_str(&body)
         .map_err(|e| format!("Failed to parse response: {e}\nRaw body: {body}"))?;
 
@@ -253,13 +254,14 @@ async fn call_anthropic(
         .await
         .map_err(|e| format!("HTTP error: {e}"))?;
 
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
+    let status = resp.status();
+    let bytes = resp.bytes().await.map_err(|e| format!("Failed to read Anthropic response body: {e}"))?;
+    let body = String::from_utf8_lossy(&bytes).to_string();
+
+    if !status.is_success() {
         return Err(format!("Anthropic API error {status}: {body}"));
     }
 
-    let body = resp.text().await.map_err(|e| format!("Failed to read Anthropic response body: {e}"))?;
     let ar: AnthropicResponse = serde_json::from_str(&body)
         .map_err(|e| format!("Failed to parse Anthropic response: {e}\nRaw body: {body}"))?;
 
