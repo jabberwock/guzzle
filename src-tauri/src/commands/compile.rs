@@ -181,6 +181,9 @@ pub async fn compile_harness(
         .join(" ");
     let _ = app.emit("compile_output", format!("$ {clang} {args_display}"));
 
+    // Set working dir to temp so clang's intermediate files don't land in
+    // src-tauri/ (the cargo run cwd), which would trigger Tauri's file watcher.
+    cmd.current_dir(&temp_dir);
     let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn clang: {e}"))?;
 
     let stderr = child.stderr.take().unwrap();

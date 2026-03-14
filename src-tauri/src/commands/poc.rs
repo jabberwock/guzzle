@@ -56,14 +56,16 @@ fn find_rop_tool() -> Option<RopTool> {
     None
 }
 
-fn run_rop_tool(tool: &RopTool, binary: &str) -> Result<String, String> {
+fn run_rop_tool(tool: &RopTool, binary: &str, work_dir: &std::path::Path) -> Result<String, String> {
     let output = match tool {
         RopTool::ROPgadget => Command::new("ROPgadget")
             .args(["--binary", binary, "--rop", "--nosys"])
+            .current_dir(work_dir)
             .output()
             .map_err(|e| format!("ROPgadget error: {e}"))?,
         RopTool::Ropper => Command::new("ropper")
             .args(["-f", binary])
+            .current_dir(work_dir)
             .output()
             .map_err(|e| format!("ropper error: {e}"))?,
     };
@@ -177,6 +179,7 @@ pub async fn generate_poc(
             .join(" ");
         emit(&app, format!("      [pre-compile] $ {clang} {args_display}"));
 
+        obj_cmd.current_dir(&temp_dir);
         let mut obj_child = obj_cmd.spawn()
             .map_err(|e| format!("Failed to spawn clang for pre-compile: {e}"))?;
         let obj_stderr = obj_child.stderr.take().unwrap();
@@ -260,6 +263,7 @@ pub async fn generate_poc(
         .join(" ");
     emit(&app, format!("      $ {clang} {args_display}"));
 
+    cmd.current_dir(&temp_dir);
     let mut child = cmd.spawn()
         .map_err(|e| format!("Failed to spawn clang: {e}"))?;
 
@@ -320,7 +324,7 @@ pub async fn generate_poc(
 
     // ── Step 5: Extract ROP gadgets ──────────────────────────────────────────
     emit(&app, format!("[ 5/5 ] Extracting ROP gadgets with {tool_name}…"));
-    let gadgets = match run_rop_tool(&rop_tool, reproducer_path.to_str().unwrap()) {
+    let gadgets = match run_rop_tool(&rop_tool, reproducer_path.to_str().unwrap(), &temp_dir) {
         Ok(g) => {
             let count = g.lines().count();
             emit(&app, format!("      Found {count} gadget lines (truncated at 200)"));
