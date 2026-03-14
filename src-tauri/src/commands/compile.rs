@@ -85,8 +85,9 @@ pub async fn compile_harness(
     // Strip any #include lines that pull in one of the target files directly
     let harness_clean = strip_target_includes(&harness, &target_files);
 
-    // Build extern "C" forward declarations for C target functions
-    let extern_c_block = build_extern_c_block(&target_files);
+    // Build extern "C" forward declarations for C target functions.
+    // Pass the harness so we can skip forward-declaring types the AI already defined.
+    let extern_c_block = build_extern_c_block(&target_files, &harness_clean);
 
     let harness_final = format!("{HARNESS_PREAMBLE}{extern_c_block}{harness_clean}{HARNESS_POSTAMBLE}");
     let harness_path = temp_dir.join("harness.cpp");
@@ -230,7 +231,23 @@ pub fn strip_target_includes(harness: &str, target_files: &[String]) -> String {
         .join("\n")
 }
 
-pub fn build_extern_c_block(target_files: &[String]) -> String {
+/// Returns true if `harness` contains a full typedef/struct definition for `type_name`.
+/// Catches both:
+///   typedef struct TypeName { ... } TypeName;   (named)
+///   typedef struct { ... } TypeName;             (anonymous)
+fn harness_defines_type(harness: &str, type_name: &str) -> bool {
+    // The closing `} TypeName;` token is the reliable marker for both patterns.
+    harness.contains(&format!("}} {};", type_name))
+        || harness.contains(&format!("}}{};", type_name))
+        // Also catch `} TypeName ;` with extra whitespace
+        || harness.lines().any(|l| {
+            let t = l.trim();
+            t.starts_with('}') && t.trim_start_matches('}').trim().starts_with(type_name)
+                && t.ends_with(';')
+        })
+}
+
+pub fn build_extern_c_block(target_files: &[String], harness: &str) -> String {
     let c_files: Vec<&String> = target_files.iter()
         .filter(|f| f.ends_with(".c"))
         .collect();
@@ -290,7 +307,9 @@ pub fn build_extern_c_block(target_files: &[String]) -> String {
                 .chain(sig.params.iter().map(|p| p.type_name.as_str()));
             for t in all_types {
                 let base = bare_type(t);
-                if !base.is_empty() && !primitive(&base) && seen_types.insert(base.clone()) {
+                if !base.is_empty() && !primitive(&base) && seen_types.insert(base.clone())
+                    && !harness_defines_type(harness, &base)
+                {
                     lines.push(format!("    typedef struct {base} {base};"));
                 }
             }
@@ -371,12 +390,12 @@ mod tests {
 
     #[test]
     fn extern_c_empty_input() {
-        assert_eq!(build_extern_c_block(&[]), "");
+        assert_eq!(build_extern_c_block(&[], ""), "");
     }
 
     #[test]
     fn extern_c_cpp_only() {
-        assert_eq!(build_extern_c_block(&["foo.cpp".to_string()]), "");
+        assert_eq!(build_extern_c_block(&["foo.cpp".to_string()], ""), "");
     }
 
     #[test]
@@ -385,7 +404,7 @@ mod tests {
         writeln!(f, "int add(int a, int b) {{ return a + b; }}").unwrap();
         let path = f.path().to_string_lossy().to_string();
 
-        let result = build_extern_c_block(&[path]);
+        let result = build_extern_c_block(&[path], "");
         assert!(result.contains("extern \"C\""));
         assert!(result.contains("int add("));
         assert!(!result.contains("typedef struct"));
@@ -398,8 +417,28 @@ mod tests {
         writeln!(f, "TlvField *parse(unsigned char *buf, int len) {{ return 0; }}").unwrap();
         let path = f.path().to_string_lossy().to_string();
 
-        let result = build_extern_c_block(&[path]);
+        // No harness — forward typedef should be emitted
+        let result = build_extern_c_block(&[path], "");
         assert!(result.contains("typedef struct TlvField TlvField;"));
+    }
+
+    #[test]
+    fn extern_c_skips_typedef_already_defined_in_harness() {
+        // Regression: AI harness defines `typedef struct { ... } TlvField;`
+        // build_extern_c_block must NOT also emit `typedef struct TlvField TlvField;`
+        // because C++ rejects redefining a typedef to a different (anonymous) struct type.
+        let mut f = tempfile::Builder::new().suffix(".c").tempfile().unwrap();
+        writeln!(f, "TlvField *parse(unsigned char *buf, int len) {{ return 0; }}").unwrap();
+        let path = f.path().to_string_lossy().to_string();
+
+        // Harness uses anonymous struct pattern (common AI output)
+        let harness = "typedef struct {\n    uint8_t type;\n} TlvField;\n";
+        let result = build_extern_c_block(&[path], harness);
+        assert!(!result.contains("typedef struct TlvField TlvField;"),
+            "must not forward-declare a type the harness already fully defines");
+        // Function declaration should still appear
+        // The format is "ReturnType FuncName(" — there may be a space before the name
+        assert!(result.contains("parse("), "function declaration must still be emitted");
     }
 
     #[test]
@@ -411,7 +450,7 @@ mod tests {
         writeln!(f, "static TlvField *parse(const unsigned char *buf, int len) {{ return 0; }}").unwrap();
         let path = f.path().to_string_lossy().to_string();
 
-        let result = build_extern_c_block(&[path]);
+        let result = build_extern_c_block(&[path], "");
         assert!(!result.contains("struct static"), "static must not appear inside typedef struct");
         assert!(result.contains("typedef struct TlvField TlvField") || result.contains("TlvField"));
     }
@@ -424,7 +463,7 @@ mod tests {
         std::fs::write(&c_path, "int foo(int x) { return x; }").unwrap();
         std::fs::write(&h_path, "int foo(int x);").unwrap();
 
-        let result = build_extern_c_block(&[c_path.to_string_lossy().to_string()]);
+        let result = build_extern_c_block(&[c_path.to_string_lossy().to_string()], "");
         let h_str = h_path.to_string_lossy().replace('\\', "/");
         assert!(result.contains(&format!("#include \"{h_str}\"")));
     }
