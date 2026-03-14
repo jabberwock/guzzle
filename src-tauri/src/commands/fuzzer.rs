@@ -28,6 +28,8 @@ pub struct CrashFile {
     pub path: String,
     pub size: u64,
     pub preview_bytes: Vec<u8>,
+    /// Unix timestamp (seconds) of the file's last modification time.
+    pub modified_secs: u64,
 }
 
 // Resettable per-run child PID so stop_fuzzer can kill it.
@@ -237,15 +239,24 @@ pub async fn read_crash_files(corpus_dir: String) -> Result<Vec<CrashFile>, Stri
         let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
         if !is_crash_filename(&name) { continue; }
 
-        let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+        let meta = entry.metadata().ok();
+        let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+        let modified_secs = meta
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
         let data = std::fs::read(&path).unwrap_or_default();
         crashes.push(CrashFile {
             path: path.to_string_lossy().to_string(),
             size,
             preview_bytes: data.into_iter().take(256).collect(),
+            modified_secs,
         });
     }
 
+    // Newest first
+    crashes.sort_unstable_by(|a, b| b.modified_secs.cmp(&a.modified_secs));
     Ok(crashes)
 }
 
@@ -271,12 +282,19 @@ fn emit_new_crashes(crash_dir: &PathBuf, app: &AppHandle, seen: &Arc<Mutex<HashS
         if seen_lock.contains(&path_str) { continue; }
         seen_lock.insert(path_str.clone());
 
-        let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+        let meta = entry.metadata().ok();
+        let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+        let modified_secs = meta
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
         let data = std::fs::read(&path).unwrap_or_default();
         let _ = app.emit("fuzzer_crash", CrashFile {
             path: path_str,
             size,
             preview_bytes: data.into_iter().take(256).collect(),
+            modified_secs,
         });
     }
 }
@@ -415,6 +433,40 @@ mod tests {
     #[test]
     fn crash_filename_crash_no_dash() {
         assert!(!is_crash_filename("crash"));
+    }
+
+    // --- read_crash_files sorting ---
+
+    #[test]
+    fn crash_files_sorted_newest_first() {
+        let dir = tempfile::tempdir().unwrap();
+        // Create two crash files with different mtimes using std::fs::write,
+        // then manually set their timestamps via a small sleep.
+        let older = dir.path().join("crash-aaa");
+        let newer = dir.path().join("crash-bbb");
+        std::fs::write(&older, b"old").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        std::fs::write(&newer, b"new").unwrap();
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(read_crash_files(dir.path().to_str().unwrap().to_string())).unwrap();
+
+        assert_eq!(result.len(), 2);
+        assert!(result[0].modified_secs >= result[1].modified_secs,
+            "crashes should be newest first");
+        assert!(result[0].path.contains("crash-bbb"));
+    }
+
+    #[test]
+    fn crash_file_modified_secs_nonzero() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("crash-abc"), b"data").unwrap();
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(read_crash_files(dir.path().to_str().unwrap().to_string())).unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert!(result[0].modified_secs > 0);
     }
 
     // --- find_clang_rt_dir ---

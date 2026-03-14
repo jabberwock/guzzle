@@ -30,6 +30,7 @@ export interface CrashFile {
   path: string;
   size: number;
   preview_bytes: number[];
+  modified_secs: number;
 }
 
 export interface FuzzerStats {
