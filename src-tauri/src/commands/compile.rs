@@ -48,8 +48,9 @@ static int __guzzle_jmp_ready = 0;
 #ifndef _WIN32
 extern "C" void exit(int code) {
     if (__guzzle_jmp_ready) { longjmp(__guzzle_exit_buf, 1); }
-    /* setjmp not called yet (e.g. during startup) — let it propagate */
-    __builtin_trap();
+    /* Not inside a fuzz iteration (e.g. libFuzzer shutdown) — terminate cleanly
+       so the process exits with the correct code instead of firing a crash signal. */
+    _exit(code);
 }
 #endif
 /* === end preamble === */
@@ -630,6 +631,17 @@ mod tests {
         // The nearest #ifndef _WIN32 before the exit() declaration must exist
         HARNESS_PREAMBLE[..exit_pos].rfind("#ifndef _WIN32")
             .expect("exit() override must be inside #ifndef _WIN32 guard");
+    }
+
+    #[test]
+    fn preamble_exit_override_falls_back_to_exit_not_trap() {
+        // Regression: when __guzzle_jmp_ready == 0 (e.g. libFuzzer shutdown),
+        // the exit() override must call _exit() and not __builtin_trap().
+        // __builtin_trap() fires a crash signal, producing a spurious finding.
+        assert!(!HARNESS_PREAMBLE.contains("__builtin_trap"),
+            "exit() fallback must use _exit(), not __builtin_trap()");
+        assert!(HARNESS_PREAMBLE.contains("_exit(code)"),
+            "exit() fallback must call _exit(code)");
     }
 
     #[test]
