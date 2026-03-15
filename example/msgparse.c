@@ -61,21 +61,10 @@ static char *parse_string(const uint8_t *data, uint16_t len)
     if (len > MAX_STR_LEN)
         return NULL;
 
-    /* +1 for the null terminator */
-    char *buf = malloc(len + 1);   /* BUG: if len == 0xFFFF, len+1 wraps
-                                      to 0 — malloc(0) is valid but the
-                                      subsequent memcpy overflows.
-                                      Masked because the MAX_STR_LEN check
-                                      above uses uint16_t comparison and
-                                      4096 < 65535, so len=0x1001 slips
-                                      through when MAX_STR_LEN is bumped
-                                      in a config — but as written the
-                                      real trap is the implicit promotion:
-                                      len is uint16_t, +1 is int,
-                                      result is int, then truncated back
-                                      to the malloc size_t argument via
-                                      a narrowing conversion on some ABIs.
-                                      Leave as-is for the fuzzer to find. */
+    /* BUG: allocates len bytes but writes len+1 — the null terminator
+       on the next line writes one byte past the end of the buffer.
+       Triggers on any non-empty STRING field. */
+    char *buf = malloc(len);
     if (!buf)
         return NULL;
 
@@ -102,11 +91,6 @@ static TlvField *parse_array(const uint8_t *data, uint16_t data_len,
 
     if (count == 0) return NULL;
 
-    /* BUG: count * sizeof(TlvField) can overflow uint32_t for large count
-       before the result is widened to size_t on a 64-bit host this is
-       fine, but on a 32-bit build (or if cast happens before widening in
-       an optimised build) the allocation is undersized and the loop below
-       writes past it.  Looks like a correct bounds-checked alloc. */
     TlvField *arr = malloc(count * sizeof(TlvField));
     if (!arr) return NULL;
     memset(arr, 0, count * sizeof(TlvField));
@@ -115,7 +99,10 @@ static TlvField *parse_array(const uint8_t *data, uint16_t data_len,
     const uint8_t *end = data + data_len;
     int parsed = 0;
 
-    while (p + 3 <= end && parsed < count) {
+    /* BUG: missing `parsed < count` bound — loop processes every sub-record
+       present in the data regardless of the declared count, writing past
+       the end of arr when the data contains more records than count. */
+    while (p + 3 <= end) {
         TlvField *f = &arr[parsed];
         f->type   = p[0];
         f->length = read_u16_be(p + 1);
@@ -158,16 +145,14 @@ char *decode_varlen(const uint8_t *data, size_t data_len)
     const uint8_t *end = data + data_len;
 
     /* First pass: compute total length */
-    uint32_t total = 0;
+    /* BUG: uint8_t wraps at 256 — two chunks whose sizes sum to > 255
+       produce a small total, malloc(total+1) allocates a tiny buffer,
+       and the second loop then writes the full data into it. */
+    uint8_t total = 0;
     const uint8_t *scan = p;
     for (int i = 0; i < nchunks; i++) {
         if (scan >= end) return NULL;
         uint8_t clen = *scan++;
-        /* BUG: total accumulates without overflow check.
-           255 chunks × 255 bytes = 65025 which is fine, but nchunks is
-           read from untrusted input and a crafted sequence of chunk_len
-           values can push total past UINT32_MAX, wrapping back to a
-           small value and making the malloc below undersized. */
         total += clen;
         scan  += clen;
     }
@@ -209,12 +194,6 @@ int ParseMessage(const uint8_t *buf, size_t buf_len, Message *msg)
         uint16_t length = read_u16_be(p + 1);
         p += 3;
 
-        /* BUG: signed/unsigned confusion — length is uint16_t so it's
-           always >= 0, but on some compilers the (p + length > end)
-           comparison is done as ptrdiff_t after implicit conversion,
-           and a length of 0x8000+ combined with a p near the end of a
-           large buffer can cause the addition to wrap the pointer,
-           making the check pass when it shouldn't. */
         if (p + length > end)
             break;
 
@@ -240,11 +219,6 @@ int ParseMessage(const uint8_t *buf, size_t buf_len, Message *msg)
         case 0x03: /* ARRAY */
         {
             int sub_count = 0;
-            /* BUG: no recursion / nesting depth limit — a crafted message
-               with deeply nested 0x03 fields will exhaust the stack. The
-               sub-record loop in parse_array can itself encounter 0x03
-               fields which are then reparsed by a recursive ParseMessage
-               call from the caller's driver, hitting unbounded recursion. */
             TlvField *sub = parse_array(p, length, &sub_count);
             f->value = (uint8_t *)sub;
             f->length = (uint16_t)sub_count;   /* repurpose length as count */
