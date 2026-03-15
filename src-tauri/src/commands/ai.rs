@@ -132,6 +132,20 @@ Requirements:
      headers — the harness must compile on Windows (MSVC/clang-cl) as well as Linux/macOS.
      Use only headers from the C/C++ standard library.
 5. Do NOT call exit() or abort()
+10. Always zero-initialize output structs before passing them to the target function,
+    e.g. `MyStruct s = {0};` or `MyStruct s; memset(&s, 0, sizeof(s));`.
+    Never leave stack-allocated structs uninitialised — if the target returns early
+    without writing to the struct, uninitialized fields (e.g. a count member) will
+    cause the harness cleanup loop to free garbage pointers and produce false crashes.
+11. When freeing heap members of a struct after the call, never free a pointer and
+    then dereference it again in a later branch. For tagged/union-style fields,
+    use if/else so each pointer is freed exactly once:
+      if (field.type == ARRAY_TYPE) {{
+          /* free sub-array contents, then the sub-array itself */
+          free(sub_array);
+      }} else {{
+          free(field.value);
+      }}
 6. Do NOT use `mkstemp`, `_mktemp_s`, or any platform-specific temp file API.
    If the function requires a file path, use a fixed path inside the system temp directory:
    `"/tmp/guzzle_input"` on Linux/macOS, or wrap with `#ifdef _WIN32` to use
@@ -377,6 +391,22 @@ mod tests {
         let (_, user) = build_prompt(&sig, "");
         // Prompt must tell the AI to cast malloc — harness is compiled as C++
         assert!(user.contains("(char *)malloc") || user.contains("cast"));
+    }
+
+    #[test]
+    fn build_prompt_requires_zero_init() {
+        let sig = dummy_sig("foo");
+        let (_, user) = build_prompt(&sig, "");
+        assert!(user.contains("zero-init") || user.contains("memset") || user.contains("{0}"),
+            "prompt must instruct AI to zero-initialize output structs");
+    }
+
+    #[test]
+    fn build_prompt_requires_single_free() {
+        let sig = dummy_sig("foo");
+        let (_, user) = build_prompt(&sig, "");
+        assert!(user.contains("exactly once") || user.contains("free a pointer and") || user.contains("if/else"),
+            "prompt must instruct AI to free each pointer exactly once");
     }
 
     #[test]
