@@ -354,13 +354,23 @@ pub async fn generate_poc(
     emit(&app, "[ AI  ] Sending to AI for PoC script generation…");
 
     let crash_bytes = std::fs::read(&crash_path).unwrap_or_default();
+    let crash_size = crash_bytes.len();
+    // Send up to 512 bytes — enough to capture full chunk structures in format-based
+    // parsers (e.g. length-prefixed inputs) so the AI can identify the bug class
+    // from the actual input layout rather than guessing.
+    let preview_cap = 512.min(crash_size);
+    let truncated = crash_size > preview_cap;
     let hex_preview: String = crash_bytes
         .iter()
-        .take(64)
+        .take(preview_cap)
         .map(|b| format!("{b:02x}"))
         .collect::<Vec<_>>()
         .join(" ");
-    let crash_size = crash_bytes.len();
+    let hex_preview = if truncated {
+        format!("{hex_preview}  … ({} bytes total, first {preview_cap} shown)", crash_size)
+    } else {
+        hex_preview
+    };
 
     let param_str = function_signature
         .params
@@ -378,15 +388,29 @@ pub async fn generate_poc(
         Output only raw Python code with no markdown fences and no explanation."
         .to_string();
 
+    // Truncate harness source to avoid blowing the context window — first 100
+    // lines are enough for the AI to see how the crash input is parsed and
+    // which function is called, which is what determines the vuln class.
+    let harness_preview: String = harness_final
+        .lines()
+        .take(100)
+        .collect::<Vec<_>>()
+        .join("\n");
+
     let user = format!(
         r#"You are an expert binary exploitation researcher.
 
 Target function: {func_sig}
-Crash input (first 64 bytes hex): {hex_preview}
+Crash input hex: {hex_preview}
 Crash input size: {crash_size} bytes
 Binary: compiled with -no-pie -O0 -fno-stack-protector, NX enabled, no ASan
 Reproducer binary: {reproducer_path}
 Reproducer invocation: {reproducer_path} {crash_path}
+
+Fuzzer harness source (shows how the crash input maps to function arguments):
+```c
+{harness_preview}
+```
 
 Available ROP gadgets:
 {gadgets}
