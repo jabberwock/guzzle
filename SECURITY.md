@@ -2,9 +2,9 @@
 
 ## Scope
 
-Guzzle is a local desktop application. It runs entirely on your machine — there is no Guzzle server, no telemetry, and no cloud backend. Your source files, harnesses, and crash data never leave your device.
+Guzzle is a local desktop application. It runs entirely on your machine — there is no Guzzle server, no telemetry, and no cloud backend. There is no Guzzle server and no telemetry.
 
-The only outbound network traffic is the AI harness/PoC generation request you explicitly trigger, which goes directly to the provider you configured (DeepSeek, Claude, OpenAI, Ollama, etc.). API keys are stored in your OS keychain, not in the application or any config file.
+When you trigger AI harness or PoC generation, the relevant source code and function signature are sent directly to the AI provider you configured (DeepSeek, Claude, OpenAI, Ollama, etc.). No other data leaves your device, and nothing is sent without an explicit action on your part. API keys are stored in your OS keychain, not in the application or any config file.
 
 ## Supported Versions
 
