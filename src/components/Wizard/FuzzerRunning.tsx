@@ -160,12 +160,6 @@ export default function FuzzerRunning({ onBack, onNext }: Props) {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <button
-            onClick={pickSeedDir}
-            className="text-xs text-[#58a6ff] hover:underline"
-          >
-            + Seed corpus
-          </button>
           <div className="flex items-center gap-1.5">
             <label className="text-xs text-[#8b949e]">Timeout</label>
             <input
@@ -178,17 +172,6 @@ export default function FuzzerRunning({ onBack, onNext }: Props) {
             />
             <span className="text-xs text-[#8b949e]">sec (0=∞)</span>
           </div>
-          <div className="flex items-center gap-1.5">
-            <label className="text-xs text-[#8b949e]">Flags</label>
-            <input
-              type="text"
-              value={extraFlags}
-              onChange={(e) => setExtraFlags(e.target.value)}
-              disabled={running}
-              placeholder="-max_len=65536"
-              className="w-40 bg-[#161b22] border border-[#30363d] rounded px-2 py-0.5 text-xs text-[#e6edf3] font-mono focus:outline-none focus:border-[#58a6ff] disabled:opacity-50 placeholder-[#484f58]"
-            />
-          </div>
           {running ? (
             <div className="flex items-center gap-2">
               <div className="w-2 h-2 bg-[#3fb950] rounded-full animate-pulse" />
@@ -200,6 +183,27 @@ export default function FuzzerRunning({ onBack, onNext }: Props) {
               <span className="text-xs text-[#8b949e] font-medium">Stopped</span>
             </div>
           )}
+        </div>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <button
+          onClick={pickSeedDir}
+          disabled={running}
+          className="text-xs text-[#58a6ff] hover:underline disabled:opacity-50"
+        >
+          + Seed corpus
+        </button>
+        <div className="flex items-center gap-1.5 flex-1">
+          <label className="text-xs text-[#8b949e] shrink-0">Flags</label>
+          <input
+            type="text"
+            value={extraFlags}
+            onChange={(e) => setExtraFlags(e.target.value)}
+            disabled={running}
+            placeholder="-max_len=65536 -rss_limit_mb=2048"
+            className="flex-1 bg-[#161b22] border border-[#30363d] rounded px-2 py-0.5 text-xs text-[#e6edf3] font-mono focus:outline-none focus:border-[#58a6ff] disabled:opacity-50 placeholder-[#484f58]"
+          />
         </div>
       </div>
 
