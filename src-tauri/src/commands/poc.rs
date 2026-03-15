@@ -391,14 +391,37 @@ Reproducer invocation: {reproducer_path} {crash_path}
 Available ROP gadgets:
 {gadgets}
 
-Generate a complete pwntools Python3 exploit script that:
-1. Uses pwntools cyclic() to determine the exact offset to RIP/EIP
-2. Demonstrates control over the instruction pointer
-3. If ret/pop gadgets and a libc path are available, attempt ret2libc to call system("/bin/sh")
-4. Includes comments explaining each step and any manual steps needed (e.g. finding libc base)
+Step 1 — Identify the vulnerability class from the function signature and crash context:
+- Stack buffer overflow: local buffer overwritten past its bounds, RIP/EIP control likely
+- Heap buffer overflow: heap allocation too small for the data written into it (e.g. integer
+  overflow in size calculation → undersized malloc → oversized copy)
+- Use-after-free: memory accessed after free()
+- Out-of-bounds read: read past allocation, useful for leaks
+- Type confusion / integer overflow: incorrect type used for size/index arithmetic
 
-Note: ASLR may be enabled. Suggest disabling with:
-  echo 0 | sudo tee /proc/sys/kernel/randomize_va_space
+Step 2 — Generate a complete pwntools Python3 exploit script appropriate for that class:
+
+If STACK overflow:
+  - Use cyclic() to find the exact offset to RIP/EIP
+  - Demonstrate RIP control
+  - If pop/ret gadgets are available, attempt ret2libc to call system("/bin/sh")
+
+If HEAP overflow:
+  - Do NOT use cyclic() to find a stack offset — there is none
+  - Craft an input that triggers the overflow (demonstrate the allocator corruption or
+    controlled write beyond the heap allocation)
+  - Describe what heap metadata or adjacent object could be corrupted for further exploitation
+  - If the binary is glibc, note relevant tcache/fastbin/unsorted-bin techniques
+
+If USE-AFTER-FREE or OOB READ:
+  - Craft an input that triggers the condition
+  - Show how to achieve an information leak or controlled write
+
+Always:
+- Explain which vulnerability class was identified and why, in a comment at the top
+- Include comments explaining each step
+- Note ASLR: suggest disabling with:
+    echo 0 | sudo tee /proc/sys/kernel/randomize_va_space
 
 Return ONLY the Python3 source code, no markdown fences."#,
         reproducer_path = reproducer_path.display(),
