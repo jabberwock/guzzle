@@ -37,12 +37,16 @@ export default function FuzzerRunning({ onBack, onNext }: Props) {
     fuzzerOutput,
     fuzzerStats,
     crashes,
+    fuzzerTimeoutSecs,
+    fuzzerExtraFlags,
     setFuzzerPid,
     appendFuzzerOutput,
     clearFuzzerOutput,
     setFuzzerStats,
     setCrashes,
     appendCrash,
+    setFuzzerTimeoutSecs,
+    setFuzzerExtraFlags,
   } = useSession();
 
   const startedRef = useRef(false);
@@ -58,8 +62,6 @@ export default function FuzzerRunning({ onBack, onNext }: Props) {
 
   const [running, setRunning] = useState(false);
   const [seedDir, setSeedDir] = useState<string | null>(null);
-  const [timeoutSecs, setTimeoutSecs] = useState(5);
-  const [extraFlags, setExtraFlags] = useState("");
 
   const defaultCorpusDir = filePath
     ? filePath.replace(/[/\\][^/\\]+$/, "") + "/.guzzle/corpus"
@@ -124,9 +126,9 @@ export default function FuzzerRunning({ onBack, onNext }: Props) {
       const pid = await startFuzzer({
         binary: compiledBinaryPath,
         corpus_dir: corpusDir,
-        max_total_time: timeoutSecs,
+        max_total_time: fuzzerTimeoutSecs,
         jobs: 1,
-        extra_flags: extraFlags,
+        extra_flags: fuzzerExtraFlags,
       });
       setFuzzerPid(pid);
     } catch (e) {
@@ -165,8 +167,8 @@ export default function FuzzerRunning({ onBack, onNext }: Props) {
             <input
               type="number"
               min={0}
-              value={timeoutSecs}
-              onChange={(e) => setTimeoutSecs(Math.max(0, parseInt(e.target.value) || 0))}
+              value={fuzzerTimeoutSecs}
+              onChange={(e) => setFuzzerTimeoutSecs(Math.max(0, parseInt(e.target.value) || 0))}
               disabled={running}
               className="w-14 bg-[#161b22] border border-[#30363d] rounded px-2 py-0.5 text-xs text-[#e6edf3] font-mono focus:outline-none focus:border-[#58a6ff] disabled:opacity-50"
             />
@@ -198,8 +200,8 @@ export default function FuzzerRunning({ onBack, onNext }: Props) {
           <label className="text-xs text-[#8b949e] shrink-0">Flags</label>
           <input
             type="text"
-            value={extraFlags}
-            onChange={(e) => setExtraFlags(e.target.value)}
+            value={fuzzerExtraFlags}
+            onChange={(e) => setFuzzerExtraFlags(e.target.value)}
             disabled={running}
             placeholder="-max_len=65536 -rss_limit_mb=2048"
             className="flex-1 bg-[#161b22] border border-[#30363d] rounded px-2 py-0.5 text-xs text-[#e6edf3] font-mono focus:outline-none focus:border-[#58a6ff] disabled:opacity-50 placeholder-[#484f58]"

@@ -120,6 +120,8 @@ interface SessionState {
   fuzzerOutput: string[];
   fuzzerStats: FuzzerStats | null;
   crashes: CrashFile[];
+  fuzzerTimeoutSecs: number;
+  fuzzerExtraFlags: string;
 
   // AI provider
   aiProvider: AiProvider;
@@ -145,6 +147,8 @@ interface SessionState {
   setFuzzerStats: (stats: FuzzerStats | null) => void;
   setCrashes: (crashes: CrashFile[]) => void;
   appendCrash: (crash: CrashFile) => void;
+  setFuzzerTimeoutSecs: (secs: number) => void;
+  setFuzzerExtraFlags: (flags: string) => void;
   setAiProvider: (provider: AiProvider) => void;
 }
 
@@ -173,6 +177,8 @@ export const useSession = create<SessionState>()(persist((set) => ({
   fuzzerOutput: [],
   fuzzerStats: null,
   crashes: [],
+  fuzzerTimeoutSecs: 60,
+  fuzzerExtraFlags: "",
   aiProvider: PRESET_PROVIDERS[0], // DeepSeek by default
 
   setFilePath: (path, content) =>
@@ -213,6 +219,8 @@ export const useSession = create<SessionState>()(persist((set) => ({
   setFuzzerStats: (stats) => set({ fuzzerStats: stats ?? null }),
   setCrashes: (crashes) => set({ crashes }),
   appendCrash: (crash) => set((state) => ({ crashes: [...state.crashes, crash] })),
+  setFuzzerTimeoutSecs: (secs) => set({ fuzzerTimeoutSecs: secs }),
+  setFuzzerExtraFlags: (flags) => set({ fuzzerExtraFlags: flags }),
   setAiProvider: (provider) => set({ aiProvider: provider }),
 }), {
   name: "guzzle-session",
@@ -220,6 +228,8 @@ export const useSession = create<SessionState>()(persist((set) => ({
   partialize: (state) => ({
     recentFiles: state.recentFiles,
     compileSettings: state.compileSettings,
+    fuzzerTimeoutSecs: state.fuzzerTimeoutSecs,
+    fuzzerExtraFlags: state.fuzzerExtraFlags,
     // Persist provider config but not the api_key — that lives in the OS keychain
     aiProvider: { ...state.aiProvider, api_key: "" },
   }),
