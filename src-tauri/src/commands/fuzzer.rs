@@ -12,6 +12,7 @@ pub struct FuzzerArgs {
     pub corpus_dir: String,
     pub max_total_time: u64,
     pub jobs: u32,
+    pub extra_flags: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -75,6 +76,10 @@ pub async fn start_fuzzer(app: AppHandle, args: FuzzerArgs) -> Result<u32, Strin
     // Continue past the first crash and collect all unique inputs.
     cmd.arg("-fork=1");
     cmd.arg("-ignore_crashes=1");
+
+    for flag in args.extra_flags.split_whitespace() {
+        cmd.arg(flag);
+    }
 
     // Do not pass -max_total_time to the fuzzer — in fork mode the parent passes
     // its own incremented -max_total_time to each child, which overrides ours.
@@ -508,6 +513,13 @@ mod tests {
             "-fork=1 must be passed so libFuzzer continues past crashes");
         assert!(src.contains("\"-ignore_crashes=1\""),
             "-ignore_crashes=1 must be passed so libFuzzer collects multiple crashes");
+    }
+
+    #[test]
+    fn fuzzer_extra_flags_forwarded() {
+        let src = include_str!("fuzzer.rs");
+        assert!(src.contains("args.extra_flags.split_whitespace()"),
+            "extra_flags must be split and forwarded to the fuzzer command");
     }
 
     #[test]

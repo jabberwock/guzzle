@@ -59,6 +59,7 @@ export default function FuzzerRunning({ onBack, onNext }: Props) {
   const [running, setRunning] = useState(false);
   const [seedDir, setSeedDir] = useState<string | null>(null);
   const [timeoutSecs, setTimeoutSecs] = useState(5);
+  const [extraFlags, setExtraFlags] = useState("");
 
   const defaultCorpusDir = filePath
     ? filePath.replace(/[/\\][^/\\]+$/, "") + "/.guzzle/corpus"
@@ -125,6 +126,7 @@ export default function FuzzerRunning({ onBack, onNext }: Props) {
         corpus_dir: corpusDir,
         max_total_time: timeoutSecs,
         jobs: 1,
+        extra_flags: extraFlags,
       });
       setFuzzerPid(pid);
     } catch (e) {
@@ -175,6 +177,17 @@ export default function FuzzerRunning({ onBack, onNext }: Props) {
               className="w-14 bg-[#161b22] border border-[#30363d] rounded px-2 py-0.5 text-xs text-[#e6edf3] font-mono focus:outline-none focus:border-[#58a6ff] disabled:opacity-50"
             />
             <span className="text-xs text-[#8b949e]">sec (0=∞)</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <label className="text-xs text-[#8b949e]">Flags</label>
+            <input
+              type="text"
+              value={extraFlags}
+              onChange={(e) => setExtraFlags(e.target.value)}
+              disabled={running}
+              placeholder="-max_len=65536"
+              className="w-40 bg-[#161b22] border border-[#30363d] rounded px-2 py-0.5 text-xs text-[#e6edf3] font-mono focus:outline-none focus:border-[#58a6ff] disabled:opacity-50 placeholder-[#484f58]"
+            />
           </div>
           {running ? (
             <div className="flex items-center gap-2">
