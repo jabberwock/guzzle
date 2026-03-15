@@ -133,6 +133,16 @@ Requirements:
    FuzzedDataProvider is part of the libFuzzer runtime — no extra install needed.
    Only fall back to raw data/size slicing when the function genuinely expects an
    unstructured byte buffer.
+   IMPORTANT: FuzzedDataProvider is non-copyable and non-assignable. Always declare
+   and initialize it in a single statement at the top of the function:
+     FuzzedDataProvider fdp(data, size);  // correct
+   Never declare it first and assign it later — the copy-assignment operator is deleted:
+     FuzzedDataProvider fdp;              // wrong: no default constructor
+     fdp = FuzzedDataProvider(data, size); // wrong: assignment operator deleted
+   IMPORTANT: when capping a value of type uint8_t (range 0–255) against a constant,
+   ensure the constant fits in that range — comparing uint8_t against a value > 255
+   is always false and signals a type mismatch. Use the correct type (e.g. size_t)
+   for the variable if larger values are meaningful.
 
 3. Parse the fuzzer input to produce valid arguments for `{func_name}`.
    Guard against null pointers and out-of-bounds access before each call.
@@ -185,7 +195,14 @@ Requirements:
           free(field.value);
       }}
 
-11. Add a brief comment explaining the fuzzing strategy
+// Reactive: the context block may open with "// Macro definitions from source file:"
+// followed by all #define lines from the target. The AI uses these names in the
+// harness but forgets to copy the definitions, producing "undeclared identifier".
+11. If the context includes a "// Macro definitions from source file:" section,
+    copy every `#define` line from that section verbatim into the harness before
+    any code that references those names.
+
+12. Add a brief comment explaining the fuzzing strategy
 
 Return ONLY the C/C++ source code, no markdown fences."#,
         func_name = signature.name
@@ -447,6 +464,18 @@ mod tests {
         let (_, user) = build_prompt(&sig, "");
         assert!(user.contains("exactly once") || user.contains("free a pointer and") || user.contains("if/else"),
             "prompt must instruct AI to free each pointer exactly once");
+    }
+
+    #[test]
+    fn build_prompt_requires_copying_context_defines() {
+        let sig = dummy_sig("foo");
+        let (_, user) = build_prompt(&sig, "");
+        // Reactive: AI uses #define names from context without copying their definitions
+        // into the harness, producing "undeclared identifier" compile errors.
+        assert!(
+            user.contains("Macro definitions from source file") && user.contains("copy"),
+            "prompt must instruct AI to copy #define lines from context into the harness"
+        );
     }
 
     #[test]
