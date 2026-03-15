@@ -1,4 +1,4 @@
-import { memo, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { useSession } from "../../store/session";
 import { startFuzzer, stopFuzzer } from "../../lib/tauri";
 import { listen } from "@tauri-apps/api/event";
@@ -46,6 +46,16 @@ export default function FuzzerRunning({ onBack, onNext }: Props) {
   } = useSession();
 
   const startedRef = useRef(false);
+  // Track active event-listener cleanup fns so we can tear them down on unmount
+  // even if the fuzzer_stopped event hasn't fired yet (e.g. user navigates away).
+  const unlistenRef = useRef<Array<() => void>>([]);
+  useEffect(() => {
+    return () => {
+      unlistenRef.current.forEach(fn => fn());
+      unlistenRef.current = [];
+    };
+  }, []);
+
   const [running, setRunning] = useState(false);
   const [seedDir, setSeedDir] = useState<string | null>(null);
   const [timeoutSecs, setTimeoutSecs] = useState(5);
@@ -63,10 +73,10 @@ export default function FuzzerRunning({ onBack, onNext }: Props) {
     setFuzzerStats(null);
     setRunning(true);
 
-    let unlistenOutput: (() => void) | null = null;
-    let unlistenCrash: (() => void) | null = null;
-    let unlistenStats: (() => void) | null = null;
-    let unlistenStopped: (() => void) | null = null;
+    // Clean up any listeners left over from a previous run that ended without
+    // a fuzzer_stopped event (e.g. user navigated away before the process exited).
+    unlistenRef.current.forEach(fn => fn());
+    unlistenRef.current = [];
 
     // Buffer lines and flush every 150ms to avoid hammering React with
     // thousands of state updates per second from libFuzzer's output
@@ -77,33 +87,37 @@ export default function FuzzerRunning({ onBack, onNext }: Props) {
       outputBuffer = [];
     }, 150);
 
-    unlistenOutput = await listen<string>("fuzzer_output", (e) => {
+    const cleanup = () => {
+      clearInterval(flushInterval);
+      outputBuffer.forEach(appendFuzzerOutput);
+      outputBuffer = [];
+      unlistenRef.current.forEach(fn => fn());
+      unlistenRef.current = [];
+    };
+
+    const unlistenOutput = await listen<string>("fuzzer_output", (e) => {
       outputBuffer.push(e.payload);
     });
-    unlistenCrash = await listen<{ path: string; size: number; preview_bytes: number[]; modified_secs: number }>(
+    const unlistenCrash = await listen<{ path: string; size: number; preview_bytes: number[]; modified_secs: number }>(
       "fuzzer_crash",
       (e) => {
         appendCrash(e.payload);
       }
     );
     let lastStats = 0;
-    unlistenStats = await listen<FuzzerStats>("fuzzer_stats", (e) => {
+    const unlistenStats = await listen<FuzzerStats>("fuzzer_stats", (e) => {
       const now = Date.now();
       if (now - lastStats < 500) return;
       lastStats = now;
       setFuzzerStats(e.payload);
     });
-    unlistenStopped = await listen("fuzzer_stopped", () => {
-      clearInterval(flushInterval);
-      outputBuffer.forEach(appendFuzzerOutput);
-      outputBuffer = [];
+    const unlistenStopped = await listen("fuzzer_stopped", () => {
       setRunning(false);
       setFuzzerPid(null);
-      unlistenOutput?.();
-      unlistenCrash?.();
-      unlistenStats?.();
-      unlistenStopped?.();
+      cleanup();
     });
+
+    unlistenRef.current = [unlistenOutput, unlistenCrash, unlistenStats, unlistenStopped];
 
     try {
       const pid = await startFuzzer({
