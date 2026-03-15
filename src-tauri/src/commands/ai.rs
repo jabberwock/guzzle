@@ -121,8 +121,24 @@ Surrounding code context:
 
 Requirements:
 1. Implement `extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)`
-2. Parse the fuzzer input to produce valid inputs for `{func_name}`
-3. Guard against null pointers and out-of-bounds access
+
+// Prefer structured consumption over manual byte slicing — reduces OOB reads
+// and null-pointer issues that arise from hand-rolled parsing.
+2. For functions taking typed arguments (strings, ints, structs, arrays), prefer
+   FuzzedDataProvider from `<fuzzer/FuzzedDataProvider.h>`:
+     FuzzedDataProvider fdp(data, size);
+     std::string s  = fdp.ConsumeRandomLengthString();
+     int n          = fdp.ConsumeIntegral<int>();
+     size_t len     = fdp.ConsumeIntegralInRange<size_t>(0, 256);
+   FuzzedDataProvider is part of the libFuzzer runtime — no extra install needed.
+   Only fall back to raw data/size slicing when the function genuinely expects an
+   unstructured byte buffer.
+
+3. Parse the fuzzer input to produce valid arguments for `{func_name}`.
+   Guard against null pointers and out-of-bounds access before each call.
+
+// AI models frequently omit stdint.h/stddef.h, causing uint8_t/size_t to be
+// undefined. POSIX-only headers break Windows builds (no unistd.h on MSVC).
 4. Always include ALL necessary headers. Standard headers to consider:
    - `<stdint.h>`, `<stddef.h>` — always required for uint8_t / size_t
    - `<stdlib.h>`, `<string.h>` — for malloc/free/memcpy/strlen
@@ -131,13 +147,35 @@ Requirements:
    - IMPORTANT: do NOT use `<unistd.h>`, `<fcntl.h>`, or any other POSIX-only
      headers — the harness must compile on Windows (MSVC/clang-cl) as well as Linux/macOS.
      Use only headers from the C/C++ standard library.
+
 5. Do NOT call exit() or abort()
-10. Always zero-initialize output structs before passing them to the target function,
-    e.g. `MyStruct s = {0};` or `MyStruct s; memset(&s, 0, sizeof(s));`.
-    Never leave stack-allocated structs uninitialised — if the target returns early
-    without writing to the struct, uninitialized fields (e.g. a count member) will
-    cause the harness cleanup loop to free garbage pointers and produce false crashes.
-11. When freeing heap members of a struct after the call, never free a pointer and
+
+// mkstemp / _mktemp_s are platform-specific and unavailable cross-platform.
+// Fixed paths avoid races (libFuzzer is single-threaded) and portability issues.
+6. Do NOT use `mkstemp`, `_mktemp_s`, or any platform-specific temp file API.
+   If the function requires a file path, use a fixed path inside the system temp directory:
+   `"/tmp/guzzle_input"` on Linux/macOS, or wrap with `#ifdef _WIN32` to use
+   `"C:\\Temp\\guzzle_input"`. Do NOT write to the current directory.
+
+// _CRT_SECURE_NO_WARNINGS is already injected as a -D compiler flag on Windows;
+// defining it again in source causes a macro redefinition warning/error.
+7. Do NOT add `#define _CRT_SECURE_NO_WARNINGS` — it is already passed as a compiler flag.
+
+// The harness is compiled as C++ (-x c++). C++ does not allow implicit void*
+// conversions from malloc, so every allocation must be explicitly cast.
+8. The harness is compiled as C++ (`clang++ -x c++`). Always cast the return value of
+   `malloc`/`realloc` to the target pointer type, e.g. `MyType *p = (MyType *)malloc(n);`
+   A bare `T *p = malloc(n);` is valid C but a compile error in C++.
+
+// Reactive: prevents false crashes when the target returns early without writing
+// to the output struct; uninitialised fields (e.g. a count member) then drive
+// the cleanup loop to free garbage pointers, producing spurious ASan reports.
+9. Always zero-initialize output structs before passing them to the target function,
+   e.g. `MyStruct s = {{0}};` or `MyStruct s; memset(&s, 0, sizeof(s));`.
+
+// Reactive: prevents double-free false positives when union/tagged-struct fields
+// are freed in multiple branches. Each pointer must be freed in exactly one branch.
+10. When freeing heap members of a struct after the call, never free a pointer and
     then dereference it again in a later branch. For tagged/union-style fields,
     use if/else so each pointer is freed exactly once:
       if (field.type == ARRAY_TYPE) {{
@@ -146,16 +184,8 @@ Requirements:
       }} else {{
           free(field.value);
       }}
-6. Do NOT use `mkstemp`, `_mktemp_s`, or any platform-specific temp file API.
-   If the function requires a file path, use a fixed path inside the system temp directory:
-   `"/tmp/guzzle_input"` on Linux/macOS, or wrap with `#ifdef _WIN32` to use
-   `"C:\\Temp\\guzzle_input"`. Do NOT write to the current directory.
-   libFuzzer is single-threaded so there is no race condition.
-7. Do NOT add `#define _CRT_SECURE_NO_WARNINGS` — it is already passed as a compiler flag.
-8. The harness is compiled as C++ (`clang++ -x c++`). Always cast the return value of
-   `malloc`/`realloc` to the target pointer type, e.g. `MyType *p = (MyType *)malloc(n);`
-   A bare `T *p = malloc(n);` is valid C but a compile error in C++.
-9. Add a brief comment explaining the fuzzing strategy
+
+11. Add a brief comment explaining the fuzzing strategy
 
 Return ONLY the C/C++ source code, no markdown fences."#,
         func_name = signature.name
@@ -383,6 +413,16 @@ mod tests {
         let sig = dummy_sig("foo");
         let (_, user) = build_prompt(&sig, "");
         assert!(user.contains("LLVMFuzzerTestOneInput"));
+    }
+
+    #[test]
+    fn build_prompt_mentions_fuzzed_data_provider() {
+        let sig = dummy_sig("ParseData");
+        let (_, user) = build_prompt(&sig, "");
+        assert!(
+            user.contains("FuzzedDataProvider"),
+            "prompt must mention FuzzedDataProvider for structured input consumption"
+        );
     }
 
     #[test]
