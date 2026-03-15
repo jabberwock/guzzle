@@ -372,6 +372,20 @@ pub async fn generate_poc(
         hex_preview
     };
 
+    // Extract the target function's source so the AI can see the actual bug
+    // (e.g. integer overflow in size calculation before malloc) rather than
+    // guessing the vulnerability class from the signature alone.
+    let target_func_source: String = target_files.iter()
+        .find_map(|tf| {
+            let src = std::fs::read_to_string(tf).ok()?;
+            let lines: Vec<&str> = src.lines().collect();
+            let start = (function_signature.start_line as usize).saturating_sub(1);
+            let end = (function_signature.end_line as usize).min(lines.len());
+            let snippet = lines.get(start..end)?.join("\n");
+            if snippet.contains(&function_signature.name) { Some(snippet) } else { None }
+        })
+        .unwrap_or_else(|| "(source not available)".to_string());
+
     let param_str = function_signature
         .params
         .iter()
@@ -406,6 +420,11 @@ Crash input size: {crash_size} bytes
 Binary: compiled with -no-pie -O0 -fno-stack-protector, NX enabled, no ASan
 Reproducer binary: {reproducer_path}
 Reproducer invocation: {reproducer_path} {crash_path}
+
+Target function source:
+```c
+{target_func_source}
+```
 
 Fuzzer harness source (shows how the crash input maps to function arguments):
 ```c
