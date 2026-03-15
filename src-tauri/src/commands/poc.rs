@@ -419,7 +419,10 @@ Crash input hex: {hex_preview}
 Crash input size: {crash_size} bytes
 Binary: compiled with -no-pie -O0 -fno-stack-protector, NX enabled, no ASan
 Reproducer binary: {reproducer_path}
-Reproducer invocation: {reproducer_path} {crash_path}
+Reproducer invocation: {reproducer_path} <crash_file_path>
+IMPORTANT: the reproducer reads the payload from a FILE passed as argv[1], NOT from stdin.
+To deliver a payload: write the bytes to a temp file, then run the reproducer with that path as the argument.
+Do NOT use p.send() or p.sendline() — the process will exit immediately with code 1 if no file argument is given.
 
 Target function source:
 ```c
