@@ -265,32 +265,42 @@ pub async fn read_crash_files(corpus_dir: String) -> Result<Vec<CrashFile>, Stri
         return Ok(vec![]);
     }
 
-    let mut crashes = Vec::new();
-    for entry in std::fs::read_dir(&dir).map_err(|e| format!("Failed to read dir: {e}"))?.flatten() {
-        let path = entry.path();
-        if !path.is_file() { continue; }
-        let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-        if !is_crash_filename(&name) { continue; }
+    tokio::task::spawn_blocking(move || {
+        let mut crashes = Vec::new();
+        for entry in std::fs::read_dir(&dir)
+            .map_err(|e| format!("Failed to read dir: {e}"))?.flatten()
+        {
+            let path = entry.path();
+            if !path.is_file() { continue; }
+            let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+            if !is_crash_filename(&name) { continue; }
 
-        let meta = entry.metadata().ok();
-        let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-        let modified_secs = meta
-            .and_then(|m| m.modified().ok())
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        let data = std::fs::read(&path).unwrap_or_default();
-        crashes.push(CrashFile {
-            path: path.to_string_lossy().to_string(),
-            size,
-            preview_bytes: data.into_iter().take(256).collect(),
-            modified_secs,
-        });
-    }
+            let meta = entry.metadata().ok();
+            let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+            let modified_secs = meta
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
 
-    // Newest first
-    crashes.sort_unstable_by(|a, b| b.modified_secs.cmp(&a.modified_secs));
-    Ok(crashes)
+            use std::io::Read;
+            let mut buf = [0u8; 256];
+            let n = std::fs::File::open(&path)
+                .and_then(|mut f| f.read(&mut buf))
+                .unwrap_or(0);
+
+            crashes.push(CrashFile {
+                path: path.to_string_lossy().to_string(),
+                size,
+                preview_bytes: buf[..n].to_vec(),
+                modified_secs,
+            });
+        }
+        crashes.sort_unstable_by(|a, b| b.modified_secs.cmp(&a.modified_secs));
+        Ok(crashes)
+    })
+    .await
+    .map_err(|e| format!("Task panicked: {e}"))?
 }
 
 pub(crate) fn is_crash_filename(name: &str) -> bool {
@@ -550,7 +560,7 @@ mod tests {
         let older = dir.path().join("crash-aaa");
         let newer = dir.path().join("crash-bbb");
         std::fs::write(&older, b"old").unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        std::thread::sleep(std::time::Duration::from_millis(1100));
         std::fs::write(&newer, b"new").unwrap();
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -572,6 +582,22 @@ mod tests {
 
         assert_eq!(result.len(), 1);
         assert!(result[0].modified_secs > 0);
+    }
+
+    #[test]
+    fn crash_file_preview_capped_at_256_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let big = vec![0xABu8; 1024];
+        std::fs::write(dir.path().join("crash-big"), &big).unwrap();
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(read_crash_files(
+            dir.path().to_str().unwrap().to_string()
+        )).unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].preview_bytes.len(), 256);
+        assert_eq!(result[0].size, 1024);
     }
 
     // --- find_clang_rt_dir ---

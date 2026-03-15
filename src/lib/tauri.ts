@@ -12,6 +12,7 @@ export interface FuzzerArgs {
   corpus_dir: string;
   max_total_time: number;
   jobs: number;
+  extra_flags: string;
 }
 
 export async function checkToolchain(): Promise<ToolchainInfo> {
