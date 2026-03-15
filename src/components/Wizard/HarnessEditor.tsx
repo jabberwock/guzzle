@@ -103,9 +103,20 @@ export default function HarnessEditor({ onBack, onNext }: Props) {
   const getContextLines = () => {
     if (!fileContent || !functionSignature) return "";
     const lines = fileContent.split("\n");
+
+    // Collect all #define macros from the whole file so the AI uses the
+    // correct constants (e.g. MAX_FIELDS, buffer sizes) instead of guessing.
+    const defines = lines
+      .filter(l => /^\s*#\s*define\b/.test(l))
+      .join("\n");
+
     const start = Math.max(0, functionSignature.start_line - 15);
     const end = Math.min(lines.length, functionSignature.end_line + 5);
-    return lines.slice(start, end).join("\n");
+    const surrounding = lines.slice(start, end).join("\n");
+
+    return defines
+      ? `// Macro definitions from source file:\n${defines}\n\n// Surrounding code context:\n${surrounding}`
+      : surrounding;
   };
 
   const generate = async () => {
