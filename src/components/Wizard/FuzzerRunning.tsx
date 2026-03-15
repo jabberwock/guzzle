@@ -216,10 +216,10 @@ export default function FuzzerRunning({ onBack, onNext }: Props) {
         <StatBadge label="Run Time"  value={fuzzerStats ? fmtTime(fuzzerStats.run_time_secs) : "—"} />
       </div>
 
-      <div className={`rounded-md p-3 text-sm flex items-center justify-between transition-colors ${
+      <div className={`rounded-md text-sm flex items-center justify-between transition-colors ${
         crashes.length > 0
-          ? "bg-[#3d1414] border border-[#f85149] text-[#f85149]"
-          : "bg-transparent border border-transparent text-transparent"
+          ? "p-3 bg-[#3d1414] border border-[#f85149] text-[#f85149]"
+          : "h-0 overflow-hidden"
       }`}>
         <span>🐛 {crashes.length} crash{crashes.length !== 1 ? "es" : ""} found!</span>
         <button onClick={crashes.length > 0 ? onNext : undefined} className="underline text-xs">View results →</button>

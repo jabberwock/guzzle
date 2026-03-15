@@ -1,4 +1,5 @@
 import { memo, useEffect, useRef } from "react";
+import type { KeyboardEvent } from "react";
 
 interface TerminalProps {
   lines: string[];
@@ -49,15 +50,32 @@ function colorize(str: string): React.ReactNode[] {
 }
 
 export default memo(function Terminal({ lines, className = "" }: TerminalProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [lines]);
 
+  const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "a" && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      const el = containerRef.current;
+      if (!el) return;
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+    }
+  };
+
   return (
     <div
-      className={`font-mono text-xs leading-5 overflow-auto bg-[#0d1117] rounded-lg border border-[#30363d] p-3 ${className}`}
+      ref={containerRef}
+      tabIndex={0}
+      onKeyDown={handleKeyDown}
+      className={`font-mono text-xs leading-5 overflow-auto bg-[#0d1117] rounded-lg border border-[#30363d] p-3 focus:outline-none focus:ring-1 focus:ring-[#58a6ff] ${className}`}
       style={{ height: 260 }}
     >
       {lines.length === 0 ? (
