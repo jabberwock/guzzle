@@ -225,11 +225,11 @@ export default function Results({ onClose }: Props) {
                       {poc?.status === "running" ? "Generating PoC…" : "Gen PoC"}
                     </button>
                     <span className="text-[10px] text-[#8b949e]">
-                      Linux only · Requires <code className="font-mono">ROPgadget</code> or <code className="font-mono">ropper</code>
+                      Requires <code className="font-mono">radare2</code> (macOS) or <code className="font-mono">ROPgadget</code> / <code className="font-mono">ropper</code> (Linux)
                     </span>
                   </div>
                   <p className="text-[10px] text-[#8b949e]">
-                    Uses AI ({aiProvider.name}) to generate a pwntools exploit script (Linux only) — same provider and API key as harness generation.
+                    Uses AI ({aiProvider.name}) to generate a pwntools exploit script — same provider and API key as harness generation.
                   </p>
                 </div>
 
@@ -241,12 +241,11 @@ export default function Results({ onClose }: Props) {
                 {/* PoC error */}
                 {poc?.status === "error" && poc.error && (
                   <div className="bg-[#3d1414] border border-[#f85149] rounded-md p-3 text-xs text-[#f85149] whitespace-pre-wrap">
-                    {poc.error.includes("pip3 install") ? (
+                    {poc.error.includes("No ROP gadget tool found") ? (
                       <>
                         <p className="font-semibold mb-1">ROP tool not found</p>
-                        <p>Install one of:</p>
-                        <code className="block mt-1">pip3 install ROPgadget</code>
-                        <code className="block">pip3 install ropper</code>
+                        <p className="mb-1">macOS: <code>brew install radare2</code></p>
+                        <p>Linux: <code>pip3 install ROPgadget</code> or <code>pip3 install ropper</code></p>
                       </>
                     ) : (
                       poc.error

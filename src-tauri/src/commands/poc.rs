@@ -37,23 +37,39 @@ int main(int argc, char **argv) {
 enum RopTool {
     ROPgadget,
     Ropper,
+    Radare2,
+}
+
+fn probe(name: &str, arg: &str) -> bool {
+    Command::new(name)
+        .arg(arg)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok()
 }
 
 fn find_rop_tool() -> Option<RopTool> {
-    // Try ROPgadget first, then ropper
-    for (name, variant) in &[("ROPgadget", true), ("ropper", false)] {
-        // Probe by running --help and checking exit status or simply if the binary exists
-        let found = Command::new(name)
-            .arg("--help")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok();
-        if found {
-            return Some(if *variant { RopTool::ROPgadget } else { RopTool::Ropper });
-        }
-    }
+    // macOS: ROPgadget and ropper don't understand Mach-O — prefer radare2.
+    #[cfg(target_os = "macos")]
+    if probe("r2", "-h") { return Some(RopTool::Radare2); }
+
+    if probe("ROPgadget", "--help") { return Some(RopTool::ROPgadget); }
+    if probe("ropper", "--help")    { return Some(RopTool::Ropper);    }
+
+    // Linux/Windows fallback to radare2 if the others aren't available.
+    #[cfg(not(target_os = "macos"))]
+    if probe("r2", "-h") { return Some(RopTool::Radare2); }
+
     None
+}
+
+fn rop_tool_name(tool: &RopTool) -> &'static str {
+    match tool {
+        RopTool::ROPgadget => "ROPgadget",
+        RopTool::Ropper    => "ropper",
+        RopTool::Radare2   => "radare2",
+    }
 }
 
 fn run_rop_tool(tool: &RopTool, binary: &str, work_dir: &std::path::Path) -> Result<String, String> {
@@ -68,6 +84,12 @@ fn run_rop_tool(tool: &RopTool, binary: &str, work_dir: &std::path::Path) -> Res
             .current_dir(work_dir)
             .output()
             .map_err(|e| format!("ropper error: {e}"))?,
+        // r2 -q: quiet mode (no banner); -c "aaa;/R;q": analyse, list ROP gadgets, quit.
+        RopTool::Radare2 => Command::new("r2")
+            .args(["-q", "-c", "aaa;/R;q", binary])
+            .current_dir(work_dir)
+            .output()
+            .map_err(|e| format!("radare2 error: {e}"))?,
     };
 
     let text = String::from_utf8_lossy(&output.stdout).to_string();
@@ -82,7 +104,6 @@ fn emit(app: &AppHandle, msg: impl Into<String>) {
 
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-#[cfg_attr(not(target_os = "linux"), allow(unused_variables, unreachable_code))]
 pub async fn generate_poc(
     app: AppHandle,
     crash_path: String,
@@ -94,22 +115,19 @@ pub async fn generate_poc(
     provider: AiProvider,
     function_signature: FunctionSignature,
 ) -> Result<String, String> {
-    // PoC generation depends on pwntools and Linux-specific tools (ROPgadget,
-    // core dump analysis). Gate hard here rather than generating a broken script.
-    #[cfg(not(target_os = "linux"))]
-    return Err("PoC generation is only supported on Linux. \
-        pwntools, core dump analysis, and ROP tooling require a Linux environment.".to_string());
-
     // ── Step 1: Check for ROP tool ──────────────────────────────────────────
     emit(&app, "[ 1/5 ] Checking for ROP gadget tool…");
     let rop_tool = find_rop_tool().ok_or_else(|| {
-        "No ROP gadget tool found. Install one:\n  pip3 install ROPgadget\n  pip3 install ropper"
-            .to_string()
+        #[cfg(target_os = "macos")]
+        return "No ROP gadget tool found.\n  \
+                macOS: brew install radare2\n  \
+                (ROPgadget and ropper do not support Mach-O binaries)".to_string();
+        #[cfg(not(target_os = "macos"))]
+        return "No ROP gadget tool found. Install one:\n  \
+                pip3 install ROPgadget\n  pip3 install ropper\n  brew/apt install radare2"
+            .to_string();
     })?;
-    let tool_name = match &rop_tool {
-        RopTool::ROPgadget => "ROPgadget",
-        RopTool::Ropper => "ropper",
-    };
+    let tool_name = rop_tool_name(&rop_tool);
     emit(&app, format!("      Found: {tool_name}"));
 
     // ── Step 2: Write temp files ─────────────────────────────────────────────
@@ -218,8 +236,12 @@ pub async fn generate_poc(
     }
 
     let mut cmd = Command::new(&clang);
-    // No sanitizers — we want real crashes, not ASan-caught ones
+    // No sanitizers — we want real crashes, not ASan-caught ones.
+    // -no-pie is Linux-only; macOS ARM64 always produces PIE binaries.
+    #[cfg(target_os = "linux")]
     cmd.args(["-O0", "-no-pie", "-fno-stack-protector", "-g"]);
+    #[cfg(not(target_os = "linux"))]
+    cmd.args(["-O0", "-fno-stack-protector", "-g"]);
     #[cfg(target_os = "windows")]
     cmd.arg("-D_CRT_SECURE_NO_WARNINGS");
 
@@ -402,9 +424,36 @@ pub async fn generate_poc(
         Output only raw Python code with no markdown fences and no explanation."
         .to_string();
 
-    // Truncate harness source to avoid blowing the context window — first 100
-    // lines are enough for the AI to see how the crash input is parsed and
-    // which function is called, which is what determines the vuln class.
+    // Platform-specific notes injected into the prompt.
+    #[cfg(target_os = "macos")]
+    let platform_ctx = format!(
+        "Platform: macOS {} (Mach-O binary, PIE always enabled — ASLR cannot be \
+         disabled per-process on macOS without disabling SIP)\n\
+         Binary format: Mach-O — pwntools ELF() does NOT support Mach-O; use \
+         hardcoded gadget addresses from the radare2 output below.\n\
+         Architecture: {arch}\n\
+         To disable ASLR in lldb for manual testing:\n\
+           lldb -- {rp} <crash_file>\n\
+           (lldb) settings set target.disable-aslr true\n\
+           (lldb) run",
+        std::env::consts::OS,
+        arch = std::env::consts::ARCH,
+        rp = reproducer_path.display(),
+    );
+    #[cfg(target_os = "linux")]
+    let platform_ctx = format!(
+        "Platform: Linux {} (ELF binary, compiled -no-pie so base is fixed)\n\
+         Architecture: {arch}\n\
+         Disable ASLR: echo 0 | sudo tee /proc/sys/kernel/randomize_va_space",
+        std::env::consts::OS,
+        arch = std::env::consts::ARCH,
+    );
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    let platform_ctx = format!(
+        "Platform: {} {}", std::env::consts::OS, std::env::consts::ARCH
+    );
+
+    // Truncate harness source to avoid blowing the context window.
     let harness_preview: String = harness_final
         .lines()
         .take(100)
@@ -417,21 +466,19 @@ pub async fn generate_poc(
 Target function: {func_sig}
 Crash input hex: {hex_preview}
 Crash input size: {crash_size} bytes
-Binary: compiled with -no-pie -O0 -fno-stack-protector, NX enabled, no ASan
+{platform_ctx}
 Reproducer binary: {reproducer_path}
 Reproducer invocation: {reproducer_path} <crash_file_path>
 IMPORTANT: the reproducer reads the payload from a FILE passed as argv[1], NOT from stdin.
-To deliver a payload: write the bytes to a temp file, then run the reproducer with that path as the argument.
-Do NOT use p.send() or p.sendline() — the process will exit immediately with code 1 if no file argument is given.
-When calling process(), always pass the binary as a string path, not as the ELF object:
+To deliver a payload: write the bytes to a temp file, then run the reproducer with that path.
+Do NOT use p.send() or p.sendline() — the process exits with code 1 if no file argument is given.
+When calling process(), pass the binary path as a string:
   process(['/path/to/reproducer', temp_path])   # correct
-  process([context.binary, temp_path])           # wrong — context.binary is an ELF object, not a string
-  process([context.binary.path, temp_path])      # also correct if you prefer
-IMPORTANT: for heap overflows, the reproducer may exit 0 (no signal) without ASan — the corrupted
-allocation returns normally and the process exits cleanly. Do NOT call p.corefile on a process that
-exited with code 0; it will raise an exception. Instead, check the exit code: non-zero or a signal
-(SIGSEGV/SIGABRT) confirms the crash reproduced natively. If exit code is 0, note that the overflow
-is real but is only reliably detected with ASan (run the fuzzer binary, not the reproducer, to confirm).
+  process([context.binary, temp_path])           # wrong — ELF object, not a string
+IMPORTANT: for heap overflows, the reproducer may exit 0 without ASan — the corrupted
+allocation returns normally. Do NOT call p.corefile on exit code 0. Check the exit code:
+non-zero or a signal (SIGSEGV/SIGABRT) confirms native reproduction. Exit code 0 means
+the overflow is real but only reliably detected with ASan (use the fuzzer binary to confirm).
 
 Target function source:
 ```c
@@ -457,26 +504,26 @@ Step 1 — Identify the vulnerability class from the function signature and cras
 Step 2 — Generate a complete pwntools Python3 exploit script appropriate for that class:
 
 If STACK overflow:
-  - Use cyclic() to find the exact offset to RIP/EIP
-  - Demonstrate RIP control
-  - If pop/ret gadgets are available, attempt ret2libc to call system("/bin/sh")
+  - Use cyclic() to find the exact offset to the saved return address
+  - On x86_64: overwrite RIP; on ARM64: overwrite the saved x30 (link register) on the stack
+  - Demonstrate control of the instruction pointer
+  - If gadgets are available, attempt ret2libc / ret2system
 
 If HEAP overflow:
-  - Do NOT use cyclic() to find a stack offset — there is none
-  - Craft an input that triggers the overflow (demonstrate the allocator corruption or
-    controlled write beyond the heap allocation)
-  - Describe what heap metadata or adjacent object could be corrupted for further exploitation
-  - If the binary is glibc, note relevant tcache/fastbin/unsorted-bin techniques
+  - Do NOT use cyclic() — there is no stack offset
+  - Craft an input that triggers the overflow and demonstrate the out-of-bounds write
+  - Describe what heap metadata or adjacent object could be corrupted
+  - On Linux/glibc: note tcache/fastbin/unsorted-bin techniques
+  - On macOS/libmalloc: note magazine allocator metadata corruption
 
 If USE-AFTER-FREE or OOB READ:
   - Craft an input that triggers the condition
   - Show how to achieve an information leak or controlled write
 
 Always:
-- Explain which vulnerability class was identified and why, in a comment at the top
-- Include comments explaining each step
-- Note ASLR: suggest disabling with:
-    echo 0 | sudo tee /proc/sys/kernel/randomize_va_space
+- Comment at the top: vulnerability class identified and why
+- Comment each step of the script
+- Note ASLR situation (from the platform context above) and how it affects exploitation
 
 Return ONLY the Python3 source code, no markdown fences."#,
         reproducer_path = reproducer_path.display(),
@@ -515,18 +562,21 @@ mod tests {
         assert!(!REPRODUCER_MAIN.contains("__guzzle_target_main"));
     }
 
-    /// Guard that the Linux-only gate is never accidentally removed.
     #[test]
-    fn poc_generation_gated_to_linux() {
+    fn rop_tool_name_covers_all_variants() {
+        assert_eq!(rop_tool_name(&RopTool::ROPgadget), "ROPgadget");
+        assert_eq!(rop_tool_name(&RopTool::Ropper),    "ropper");
+        assert_eq!(rop_tool_name(&RopTool::Radare2),   "radare2");
+    }
+
+    #[test]
+    fn macos_no_pie_flag_absent_from_non_linux_build() {
+        // On macOS ARM64 the linker rejects -no-pie; verify it is gated.
         let src = include_str!("poc.rs");
-        assert!(
-            src.contains("#[cfg(not(target_os = \"linux\"))]"),
-            "generate_poc must have a #[cfg(not(target_os = \"linux\"))] early-return gate"
-        );
-        assert!(
-            src.contains("only supported on Linux"),
-            "the Linux gate error message must mention 'only supported on Linux'"
-        );
+        let no_pie_pos  = src.find("\"-no-pie\"").expect("\"-no-pie\" not found in poc.rs");
+        let cfg_pos     = src[..no_pie_pos].rfind("#[cfg(target_os = \"linux\")]")
+            .expect("-no-pie must be inside a #[cfg(target_os = \"linux\")] block");
+        assert!(cfg_pos < no_pie_pos);
     }
 
     #[test]

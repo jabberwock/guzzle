@@ -109,9 +109,11 @@ clang++ -O0 -no-pie -fno-stack-protector -g \
 
 ```bash
 # Extract ROP gadgets
+# macOS (Mach-O):
+r2 -q -c "aaa;/R;q" reproducer
+# Linux (ELF):
 ROPgadget --binary reproducer --rop --nosys | head -200
-# or
-ropper -f reproducer
+# or: ropper -f reproducer
 ```
 
 Use the gadgets + crash input to write a pwntools exploit scaffold:

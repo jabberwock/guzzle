@@ -85,9 +85,31 @@ pub async fn compile_harness(
 
     // Strip any #include lines that pull in one of the target files directly
     let harness_clean = strip_target_includes(&harness, &target_files);
+    // Move typedef struct blocks that appear after their first use to before it,
+    // fixing "unknown type name" errors from AI-generated ordering issues.
+    let harness_clean = hoist_type_definitions(&harness_clean);
     // Inject `extern "C"` on any forward declarations of C target functions that
     // are missing it — prevents C++ name-mangling from breaking the link step.
     let harness_clean = fix_c_fn_linkage(&harness_clean, &target_files);
+
+    // Hard-fail before invoking clang if the harness forward-declares any
+    // static C target functions. Static functions have internal linkage and
+    // do not exist as linkable symbols — even `extern "C"` declarations won't
+    // resolve them. The linker would fail with a cryptic "symbol not found"
+    // error; fail here with an actionable message instead.
+    let static_conflicts = find_static_fn_decls(&harness_clean, &target_files);
+    if !static_conflicts.is_empty() {
+        let names = static_conflicts.join("', '");
+        let plural = if static_conflicts.len() == 1 { "is" } else { "are" };
+        return Err(format!(
+            "Harness calls ['{names}'], which {plural} declared `static` in \
+             the target file. Static functions have internal C linkage and \
+             cannot be linked from the harness — no exported symbol exists, \
+             regardless of how the forward declaration is written.\n\
+             Regenerate the harness. The AI must call a public (non-static) \
+             function from the target instead of calling the static helper directly."
+        ));
+    }
 
     // Build extern "C" forward declarations for C target functions.
     // Pass the harness so we can skip forward-declaring types the AI already defined.
@@ -266,6 +288,168 @@ pub fn fix_c_fn_linkage(harness: &str, target_files: &[String]) -> String {
         }
         line.to_string()
     }).collect::<Vec<_>>().join("\n")
+}
+
+/// Move `typedef struct { ... } TypeName;` blocks that appear *after* a forward
+/// declaration using `TypeName` to *before* that declaration.
+///
+/// AI models occasionally emit a forward declaration before the struct typedef
+/// it depends on, producing "unknown type name" compile errors. This pass
+/// detects such ordering problems and hoists the typedef to the first use site.
+pub fn hoist_type_definitions(harness: &str) -> String {
+    let lines: Vec<&str> = harness.lines().collect();
+    let n = lines.len();
+
+    // Pass 1: find every `typedef struct { ... } TypeName;` block.
+    // Records (start_line, end_line, type_name) — indices inclusive.
+    let mut blocks: Vec<(usize, usize, String)> = Vec::new();
+    let mut i = 0;
+    while i < n {
+        let t = lines[i].trim();
+        // Only full struct definitions (contain '{'), not opaque typedefs.
+        if t.starts_with("typedef struct") && t.contains('{') {
+            let start = i;
+            if t.contains('}') {
+                // Single-line: `typedef struct { ... } Name;`
+                if let Some(name) = typedef_closing_name(lines[i]) {
+                    blocks.push((start, i, name));
+                }
+                i += 1;
+                continue;
+            }
+            // Multi-line: scan forward for the closing `} Name;` line.
+            i += 1;
+            while i < n {
+                if lines[i].trim().starts_with('}') && lines[i].trim().ends_with(';') {
+                    if let Some(name) = typedef_closing_name(lines[i]) {
+                        blocks.push((start, i, name));
+                    }
+                    break;
+                }
+                i += 1;
+            }
+        }
+        i += 1;
+    }
+
+    if blocks.is_empty() {
+        return harness.to_string();
+    }
+
+    let block_lines: std::collections::HashSet<usize> =
+        blocks.iter().flat_map(|(s, e, _)| *s..=*e).collect();
+
+    // Pass 2: find the earliest forward declaration that uses a type defined
+    // *later* in the harness (i.e., the typedef block's start > this line).
+    let mut hoist_before: Option<usize> = None;
+    for (idx, line) in lines.iter().enumerate() {
+        if block_lines.contains(&idx) {
+            continue;
+        }
+        let t = line.trim();
+        // Forward declarations end with ';', contain '(', have no '{'.
+        if !t.ends_with(';') || !t.contains('(') || t.contains('{') {
+            continue;
+        }
+        if t.starts_with("//") || t.starts_with("/*") || t.starts_with('#') {
+            continue;
+        }
+        for (bstart, _, name) in &blocks {
+            if *bstart > idx && t.contains(name.as_str()) {
+                hoist_before = Some(hoist_before.map_or(idx, |prev: usize| prev.min(idx)));
+            }
+        }
+    }
+
+    let Some(hoist_at) = hoist_before else {
+        return harness.to_string(); // No reordering needed.
+    };
+
+    // Only hoist blocks defined after `hoist_at`.
+    let to_hoist: Vec<_> = blocks.iter().filter(|(s, _, _)| *s > hoist_at).collect();
+    if to_hoist.is_empty() {
+        return harness.to_string();
+    }
+
+    let hoisted_lines: std::collections::HashSet<usize> =
+        to_hoist.iter().flat_map(|(s, e, _)| *s..=*e).collect();
+
+    let mut out: Vec<&str> = Vec::with_capacity(n + to_hoist.len());
+    let mut inserted = false;
+    for (idx, &line) in lines.iter().enumerate() {
+        if idx == hoist_at && !inserted {
+            for (hs, he, _) in &to_hoist {
+                for bi in *hs..=*he {
+                    out.push(lines[bi]);
+                }
+            }
+            inserted = true;
+        }
+        if !hoisted_lines.contains(&idx) {
+            out.push(line);
+        }
+    }
+    out.join("\n")
+}
+
+/// Extract the type name from the closing line of a typedef struct, e.g.
+/// `} TlvField;` → `"TlvField"`, or `typedef struct { int x; } Foo;` → `"Foo"`.
+fn typedef_closing_name(line: &str) -> Option<String> {
+    let t = line.trim();
+    let pos = t.rfind('}')?;
+    let after = t[pos + 1..].trim().trim_end_matches(';').trim();
+    if after.is_empty() || after.contains('(') || after.contains(' ') || after.contains(',') {
+        return None;
+    }
+    Some(after.to_string())
+}
+
+/// Returns names of static C target functions that the harness forward-declares
+/// (with `static`). Such declarations give the function internal linkage inside
+/// the harness translation unit — the definition in the target file is in a
+/// different TU and can never satisfy them. The linker fails with
+/// "Undefined symbols" / "symbol not found for architecture".
+pub fn find_static_fn_decls(harness: &str, target_files: &[String]) -> Vec<String> {
+    let static_fn_names: std::collections::HashSet<String> = target_files
+        .iter()
+        .filter(|f| f.ends_with(".c"))
+        .flat_map(|f| get_all_functions(f))
+        .filter(|sig| {
+            let ret = sig.return_type.trim();
+            ret.starts_with("static ") || ret.starts_with("static\t")
+        })
+        .map(|sig| sig.name.clone())
+        .collect();
+
+    if static_fn_names.is_empty() {
+        return vec![];
+    }
+
+    let mut found: Vec<String> = Vec::new();
+    for line in harness.lines() {
+        let t = line.trim();
+        if t.starts_with("//") || t.starts_with("/*") {
+            continue;
+        }
+        // Only forward declarations: ends with ';', no '{'
+        if !t.ends_with(';') || t.contains('{') {
+            continue;
+        }
+        for name in &static_fn_names {
+            let Some(pos) = t.find(name.as_str()) else { continue };
+            if pos == 0 {
+                continue; // bare call statement
+            }
+            let before = t[..pos].trim();
+            if before.is_empty() || before.contains('(') || before.contains('=') {
+                continue;
+            }
+            if !found.contains(name) {
+                found.push(name.clone());
+            }
+        }
+    }
+    found
 }
 
 pub fn strip_target_includes(harness: &str, target_files: &[String]) -> String {
@@ -648,6 +832,119 @@ mod tests {
     fn preamble_no_crt_secure_no_warnings() {
         assert!(!HARNESS_PREAMBLE.contains("_CRT_SECURE_NO_WARNINGS"),
             "_CRT_SECURE_NO_WARNINGS must be a compiler flag, not in the preamble");
+    }
+
+    // --- hoist_type_definitions ---
+
+    #[test]
+    fn hoist_moves_typedef_before_forward_decl() {
+        // Regression: AI puts the forward declaration before the typedef it needs.
+        let harness = "\
+TlvField *parse_array(const uint8_t *data, int len);\n\
+typedef struct {\n\
+    uint8_t type;\n\
+} TlvField;\n\
+extern \"C\" int LLVMFuzzerTestOneInput(const uint8_t *d, size_t s) { return 0; }\n";
+
+        let result = hoist_type_definitions(harness);
+        let typedef_pos = result.find("typedef struct").unwrap();
+        let fwd_pos = result.find("TlvField *parse_array").unwrap();
+        assert!(
+            typedef_pos < fwd_pos,
+            "typedef must appear before the forward declaration that uses it"
+        );
+    }
+
+    #[test]
+    fn hoist_no_change_when_order_correct() {
+        let harness = "\
+typedef struct {\n\
+    uint8_t type;\n\
+} TlvField;\n\
+TlvField *parse_array(const uint8_t *data, int len);\n";
+
+        let result = hoist_type_definitions(harness);
+        // Order is already correct — result should be unchanged.
+        let typedef_pos = result.find("typedef struct").unwrap();
+        let fwd_pos = result.find("TlvField *parse_array").unwrap();
+        assert!(typedef_pos < fwd_pos);
+    }
+
+    #[test]
+    fn hoist_no_change_when_no_typedef() {
+        let harness = "int foo(int x);\nextern \"C\" int LLVMFuzzerTestOneInput(const uint8_t *d, size_t s) { return 0; }\n";
+        let result = hoist_type_definitions(harness);
+        // No typedef blocks — content must be unchanged (modulo trailing newline).
+        assert_eq!(result.trim_end(), harness.trim_end());
+    }
+
+    #[test]
+    fn hoist_preserves_all_lines() {
+        let harness = "\
+#include <stdint.h>\n\
+TlvField *parse_array(const uint8_t *data, int len);\n\
+typedef struct {\n\
+    uint8_t type;\n\
+    uint16_t length;\n\
+} TlvField;\n\
+extern \"C\" int LLVMFuzzerTestOneInput(const uint8_t *d, size_t s) { return 0; }\n";
+
+        let result = hoist_type_definitions(harness);
+        // Every non-empty line from the original must still be present.
+        for line in harness.lines().filter(|l| !l.trim().is_empty()) {
+            assert!(result.contains(line), "line missing after hoist: {line:?}");
+        }
+    }
+
+    // --- find_static_fn_decls ---
+
+    #[test]
+    fn static_decl_detected_for_static_c_fn() {
+        // Regression: AI copies `static` from context into the harness forward
+        // declaration. The linker then fails with "symbol not found" because the
+        // function has internal linkage in the target TU.
+        let mut f = tempfile::Builder::new().suffix(".c").tempfile().unwrap();
+        writeln!(f, "static int *parse_array(const unsigned char *d, int len) {{ return 0; }}").unwrap();
+        let path = f.path().to_string_lossy().to_string();
+
+        let harness = "static int *parse_array(const unsigned char *d, int len);\n\
+                       extern \"C\" int LLVMFuzzerTestOneInput(const uint8_t *d, size_t s) { return 0; }\n";
+        let found = find_static_fn_decls(harness, &[path]);
+        assert!(found.contains(&"parse_array".to_string()),
+            "must detect static forward declaration of a static C function");
+    }
+
+    #[test]
+    fn static_decl_not_flagged_for_public_fn() {
+        // A non-static C function declared without `static` in the harness is fine.
+        let mut f = tempfile::Builder::new().suffix(".c").tempfile().unwrap();
+        writeln!(f, "int ParseMessage(const unsigned char *d, int len) {{ return 0; }}").unwrap();
+        let path = f.path().to_string_lossy().to_string();
+
+        let harness = "int ParseMessage(const unsigned char *d, int len);\n";
+        let found = find_static_fn_decls(harness, &[path]);
+        assert!(found.is_empty(), "public function should not be flagged");
+    }
+
+    #[test]
+    fn static_decl_not_flagged_for_call_sites() {
+        // A call to a static function (not a declaration) should not be flagged.
+        let mut f = tempfile::Builder::new().suffix(".c").tempfile().unwrap();
+        writeln!(f, "static int helper(int x) {{ return x; }}").unwrap();
+        let path = f.path().to_string_lossy().to_string();
+
+        // Call site, not a forward declaration
+        let harness = "extern \"C\" int LLVMFuzzerTestOneInput(const uint8_t *d, size_t s) {\n\
+                       helper(1);\n    return 0;\n}\n";
+        let found = find_static_fn_decls(harness, &[path]);
+        assert!(found.is_empty(), "call site should not be flagged");
+    }
+
+    #[test]
+    fn static_decl_empty_target_list() {
+        let harness = "static int foo(int x);\n";
+        let found = find_static_fn_decls(harness, &[]);
+        assert!(found.is_empty());
     }
 
     #[test]

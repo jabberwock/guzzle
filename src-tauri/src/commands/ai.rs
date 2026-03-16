@@ -122,87 +122,43 @@ Surrounding code context:
 Requirements:
 1. Implement `extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)`
 
-// Prefer structured consumption over manual byte slicing — reduces OOB reads
-// and null-pointer issues that arise from hand-rolled parsing.
-2. For functions taking typed arguments (strings, ints, structs, arrays), prefer
-   FuzzedDataProvider from `<fuzzer/FuzzedDataProvider.h>`:
+2. Prefer FuzzedDataProvider (`<fuzzer/FuzzedDataProvider.h>`) for typed arguments:
      FuzzedDataProvider fdp(data, size);
-     std::string s  = fdp.ConsumeRandomLengthString();
-     int n          = fdp.ConsumeIntegral<int>();
-     size_t len     = fdp.ConsumeIntegralInRange<size_t>(0, 256);
-   FuzzedDataProvider is part of the libFuzzer runtime — no extra install needed.
-   Only fall back to raw data/size slicing when the function genuinely expects an
-   unstructured byte buffer.
-   IMPORTANT: FuzzedDataProvider is non-copyable and non-assignable. Always declare
-   and initialize it in a single statement at the top of the function:
-     FuzzedDataProvider fdp(data, size);  // correct
-   Never declare it first and assign it later — the copy-assignment operator is deleted:
-     FuzzedDataProvider fdp;              // wrong: no default constructor
-     fdp = FuzzedDataProvider(data, size); // wrong: assignment operator deleted
-   IMPORTANT: when capping a value of type uint8_t (range 0–255) against a constant,
-   ensure the constant fits in that range — comparing uint8_t against a value > 255
-   is always false and signals a type mismatch. Use the correct type (e.g. size_t)
-   for the variable if larger values are meaningful.
+   Declare and initialize it in one statement — it has no default constructor and
+   its copy-assignment operator is deleted. Fall back to raw data/size only when
+   the function genuinely expects an unstructured byte buffer.
 
-3. Parse the fuzzer input to produce valid arguments for `{func_name}`.
+3. Derive valid arguments for `{func_name}` from the fuzzer input.
    Guard against null pointers and out-of-bounds access before each call.
 
-// AI models frequently omit stdint.h/stddef.h, causing uint8_t/size_t to be
-// undefined. POSIX-only headers break Windows builds (no unistd.h on MSVC).
-4. Always include ALL necessary headers. Standard headers to consider:
-   - `<stdint.h>`, `<stddef.h>` — always required for uint8_t / size_t
-   - `<stdlib.h>`, `<string.h>` — for malloc/free/memcpy/strlen
-   - `<stdio.h>` — for FILE*, fopen(), fclose()
-   - Any headers implied by the context above
-   - IMPORTANT: do NOT use `<unistd.h>`, `<fcntl.h>`, or any other POSIX-only
-     headers — the harness must compile on Windows (MSVC/clang-cl) as well as Linux/macOS.
-     Use only headers from the C/C++ standard library.
+4. Include only standard C/C++ headers (`<stdint.h>`, `<stddef.h>`, `<stdlib.h>`,
+   `<string.h>`, `<stdio.h>`). Do NOT use `<unistd.h>`, `<fcntl.h>`, or any
+   other POSIX-only header — the harness must also compile on Windows.
 
-5. Do NOT call exit() or abort()
+5. Do NOT call exit() or abort().
 
-// mkstemp / _mktemp_s are platform-specific and unavailable cross-platform.
-// Fixed paths avoid races (libFuzzer is single-threaded) and portability issues.
-6. Do NOT use `mkstemp`, `_mktemp_s`, or any platform-specific temp file API.
-   If the function requires a file path, use a fixed path inside the system temp directory:
-   `"/tmp/guzzle_input"` on Linux/macOS, or wrap with `#ifdef _WIN32` to use
-   `"C:\\Temp\\guzzle_input"`. Do NOT write to the current directory.
+6. Do NOT use mkstemp or any platform-specific temp-file API. Use a fixed path:
+   `"/tmp/guzzle_input"` on Linux/macOS, `"C:\\Temp\\guzzle_input"` on Windows
+   (guard with `#ifdef _WIN32`). Do NOT write to the current directory.
 
-// _CRT_SECURE_NO_WARNINGS is already injected as a -D compiler flag on Windows;
-// defining it again in source causes a macro redefinition warning/error.
-7. Do NOT add `#define _CRT_SECURE_NO_WARNINGS` — it is already passed as a compiler flag.
+7. Do NOT add `#define _CRT_SECURE_NO_WARNINGS` — it is already a compiler flag.
 
-// The harness is compiled as C++ (-x c++). C++ does not allow implicit void*
-// conversions from malloc, so every allocation must be explicitly cast.
-8. The harness is compiled as C++ (`clang++ -x c++`). Always cast the return value of
-   `malloc`/`realloc` to the target pointer type, e.g. `MyType *p = (MyType *)malloc(n);`
-   A bare `T *p = malloc(n);` is valid C but a compile error in C++.
+8. The harness is compiled as C++ (`clang++ -x c++`). Cast every malloc/realloc:
+   `MyType *p = (MyType *)malloc(n);`
 
-// Reactive: prevents false crashes when the target returns early without writing
-// to the output struct; uninitialised fields (e.g. a count member) then drive
-// the cleanup loop to free garbage pointers, producing spurious ASan reports.
-9. Always zero-initialize output structs before passing them to the target function,
-   e.g. `MyStruct s = {{0}};` or `MyStruct s; memset(&s, 0, sizeof(s));`.
+9. Zero-initialize output structs before passing them to the target:
+   `MyStruct s = {{0}};`
 
-// Reactive: prevents double-free false positives when union/tagged-struct fields
-// are freed in multiple branches. Each pointer must be freed in exactly one branch.
-10. When freeing heap members of a struct after the call, never free a pointer and
-    then dereference it again in a later branch. For tagged/union-style fields,
-    use if/else so each pointer is freed exactly once:
-      if (field.type == ARRAY_TYPE) {{
-          /* free sub-array contents, then the sub-array itself */
-          free(sub_array);
-      }} else {{
-          free(field.value);
-      }}
+10. Free each heap pointer exactly once. For tagged/union fields use if/else so
+    no pointer is freed in more than one branch.
 
-// Reactive: the context block may open with "// Macro definitions from source file:"
-// followed by all #define lines from the target. The AI uses these names in the
-// harness but forgets to copy the definitions, producing "undeclared identifier".
 11. If the context includes a "// Macro definitions from source file:" section,
-    copy every `#define` line from that section verbatim into the harness before
-    any code that references those names.
+    copy every `#define` from it verbatim into the harness before any use.
 
-12. Add a brief comment explaining the fuzzing strategy
+12. If the target function is declared `static` in the context, it has internal
+    linkage and CANNOT be called from the harness — no exported symbol exists.
+    Do NOT forward-declare it and do NOT call it. Call the public (non-static)
+    function in the same file that invokes it internally.
 
 Return ONLY the C/C++ source code, no markdown fences."#,
         func_name = signature.name
@@ -446,8 +402,7 @@ mod tests {
     fn build_prompt_requires_malloc_cast() {
         let sig = dummy_sig("foo");
         let (_, user) = build_prompt(&sig, "");
-        // Prompt must tell the AI to cast malloc — harness is compiled as C++
-        assert!(user.contains("(char *)malloc") || user.contains("cast"));
+        assert!(user.contains("malloc") && (user.contains("cast") || user.contains("Cast")));
     }
 
     #[test]

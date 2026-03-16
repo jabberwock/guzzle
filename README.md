@@ -261,17 +261,30 @@ npm run tauri build
 
 After a crash is found, select it in the Results panel and click **Gen PoC**. This:
 
-1. Compiles a standalone reproducer binary (no libFuzzer, no sanitizers, `-no-pie -fno-stack-protector`)
+1. Compiles a standalone reproducer binary (no libFuzzer, no sanitizers, `-fno-stack-protector`)
 2. Verifies the crash reproduces
-3. Extracts ROP gadgets with `ROPgadget` or `ropper` (must be installed: `pip3 install ROPgadget`)
+3. Extracts ROP gadgets (see tool requirements below)
 4. Calls AI to generate a pwntools Python3 exploit scaffold
+
+**ROP tool requirements:**
+
+| Platform | Tool | Install |
+|----------|------|---------|
+| macOS    | radare2 | `brew install radare2` |
+| Linux    | ROPgadget or ropper | `pip3 install ROPgadget` |
 
 **To run the generated script:**
 
 ```bash
 pip3 install pwntools          # if needed
-ulimit -c unlimited            # enable core dumps
-echo 0 | sudo tee /proc/sys/kernel/randomize_va_space  # disable ASLR
+
+# Linux only — disable ASLR:
+echo 0 | sudo tee /proc/sys/kernel/randomize_va_space
+
+# macOS — disable ASLR in lldb:
+# lldb -- ./reproducer <crash_file>
+# (lldb) settings set target.disable-aslr true
+
 python3 exploit.py
 ```
 
