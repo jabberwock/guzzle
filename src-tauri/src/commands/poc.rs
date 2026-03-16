@@ -423,6 +423,10 @@ Reproducer invocation: {reproducer_path} <crash_file_path>
 IMPORTANT: the reproducer reads the payload from a FILE passed as argv[1], NOT from stdin.
 To deliver a payload: write the bytes to a temp file, then run the reproducer with that path as the argument.
 Do NOT use p.send() or p.sendline() — the process will exit immediately with code 1 if no file argument is given.
+When calling process(), always pass the binary as a string path, not as the ELF object:
+  process(['/path/to/reproducer', temp_path])   # correct
+  process([context.binary, temp_path])           # wrong — context.binary is an ELF object, not a string
+  process([context.binary.path, temp_path])      # also correct if you prefer
 IMPORTANT: for heap overflows, the reproducer may exit 0 (no signal) without ASan — the corrupted
 allocation returns normally and the process exits cleanly. Do NOT call p.corefile on a process that
 exited with code 0; it will raise an exception. Instead, check the exit code: non-zero or a signal
