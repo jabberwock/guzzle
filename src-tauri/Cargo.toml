@@ -1,6 +1,6 @@
 [package]
 name = "guzzle"
-version = "0.2.0"
+version = "0.2.1"
 description = "libFuzzer GUI Frontend"
 authors = []
 edition = "2021"
