@@ -130,8 +130,43 @@ pub async fn generate_poc(
     let tool_name = rop_tool_name(&rop_tool);
     emit(&app, format!("      Found: {tool_name}"));
 
-    // ── Step 2: Write temp files ─────────────────────────────────────────────
-    emit(&app, "[ 2/5 ] Preparing reproducer source…");
+    // Derive .guzzle dir early — needed by both the ASan step and the compile step.
+    let guzzle_dir = PathBuf::from(&crash_path)
+        .parent()           // crashes/
+        .and_then(|p| p.parent()) // .guzzle/
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::env::temp_dir().join("guzzle_poc"));
+
+    // ── Step 2: Capture ASan crash report ────────────────────────────────────
+    emit(&app, "[ 2/6 ] Capturing ASan crash report…");
+    let fuzzer_path = guzzle_dir.join(if cfg!(windows) { "fuzzer.exe" } else { "fuzzer" });
+    let asan_report = if fuzzer_path.exists() {
+        emit(&app, format!("      Running: {} {}", fuzzer_path.display(), crash_path));
+        match Command::new(&fuzzer_path)
+            .arg(&crash_path)
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output()
+        {
+            Ok(out) => {
+                let text = String::from_utf8_lossy(&out.stderr).to_string();
+                let lines: Vec<&str> = text.lines().take(150).collect();
+                let report = lines.join("\n");
+                emit(&app, format!("      Captured {} lines of ASan output", lines.len()));
+                report
+            }
+            Err(e) => {
+                emit(&app, format!("      WARNING: could not run fuzzer binary: {e}"));
+                "(ASan report unavailable)".to_string()
+            }
+        }
+    } else {
+        emit(&app, format!("      WARNING: fuzzer binary not found at {} — skipping ASan report", fuzzer_path.display()));
+        "(ASan report unavailable — fuzzer binary not found)".to_string()
+    };
+
+    // ── Step 3: Write temp files ─────────────────────────────────────────────
+    emit(&app, "[ 3/6 ] Preparing reproducer source…");
     let temp_dir = std::env::temp_dir().join("guzzle_poc");
     std::fs::create_dir_all(&temp_dir)
         .map_err(|e| format!("Failed to create temp dir: {e}"))?;
@@ -153,20 +188,14 @@ pub async fn generate_poc(
     std::fs::write(&harness_path, &harness_final)
         .map_err(|e| format!("Failed to write poc_harness.cpp: {e}"))?;
 
-    // ── Step 3: Compile reproducer binary ────────────────────────────────────
-    emit(&app, "[ 3/5 ] Compiling reproducer binary (no sanitizers, -no-pie)…");
+    // ── Step 4: Compile reproducer binary ────────────────────────────────────
+    emit(&app, "[ 4/6 ] Compiling reproducer binary (no sanitizers)…");
 
     let clang = clang_override
         .filter(|p| !p.is_empty())
         .or_else(find_best_clang)
         .ok_or_else(|| "No suitable clang found.".to_string())?;
 
-    // Derive .guzzle dir from crash_path (crashes/.guzzle/crashes/crash-xxx -> .guzzle)
-    let guzzle_dir = PathBuf::from(&crash_path)
-        .parent()          // crashes/
-        .and_then(|p| p.parent()) // .guzzle/
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| std::env::temp_dir().join("guzzle_poc"));
     let reproducer_path = guzzle_dir.join(if cfg!(windows) { "reproducer.exe" } else { "reproducer" });
 
     // Detect if any C target file defines main() — rename it to avoid conflict
@@ -336,8 +365,8 @@ pub async fn generate_poc(
     emit(&app, format!("      Compiled: {}", reproducer_path.display()));
     emit(&app, format!("      Run it as: {} <crash_file>", reproducer_path.display()));
 
-    // ── Step 4: Verify crash reproduces ──────────────────────────────────────
-    emit(&app, "[ 4/5 ] Verifying crash reproduces…");
+    // ── Step 5: Verify crash reproduces ──────────────────────────────────────
+    emit(&app, "[ 5/6 ] Verifying crash reproduces…");
     let verify = Command::new(reproducer_path.to_str().unwrap())
         .arg(&crash_path)
         .current_dir(&temp_dir)
@@ -358,8 +387,8 @@ pub async fn generate_poc(
         }
     }
 
-    // ── Step 5: Extract ROP gadgets ──────────────────────────────────────────
-    emit(&app, format!("[ 5/5 ] Extracting ROP gadgets with {tool_name}…"));
+    // ── Step 6: Extract ROP gadgets ──────────────────────────────────────────
+    emit(&app, format!("[ 6/6 ] Extracting ROP gadgets with {tool_name}…"));
     let gadgets = match run_rop_tool(&rop_tool, reproducer_path.to_str().unwrap(), &temp_dir) {
         Ok(g) => {
             let count = g.lines().count();
@@ -467,6 +496,9 @@ Target function: {func_sig}
 Crash input hex: {hex_preview}
 Crash input size: {crash_size} bytes
 {platform_ctx}
+
+ASan crash report (from running the fuzzer binary on the crash input):
+{asan_report}
 Reproducer binary: {reproducer_path}
 Reproducer invocation: {reproducer_path} <crash_file_path>
 IMPORTANT: the reproducer reads the payload from a FILE passed as argv[1], NOT from stdin.
@@ -493,15 +525,8 @@ Fuzzer harness source (shows how the crash input maps to function arguments):
 Available ROP gadgets:
 {gadgets}
 
-Step 1 — Identify the vulnerability class from the function signature and crash context:
-- Stack buffer overflow: local buffer overwritten past its bounds, RIP/EIP control likely
-- Heap buffer overflow: heap allocation too small for the data written into it (e.g. integer
-  overflow in size calculation → undersized malloc → oversized copy)
-- Use-after-free: memory accessed after free()
-- Out-of-bounds read: read past allocation, useful for leaks
-- Type confusion / integer overflow: incorrect type used for size/index arithmetic
-
-Step 2 — Generate a complete pwntools Python3 exploit script appropriate for that class:
+The ASan report above identifies the vulnerability class. Generate a complete pwntools
+Python3 exploit script appropriate for that class:
 
 If STACK overflow:
   - Use cyclic() to find the exact offset to the saved return address
