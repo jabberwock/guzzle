@@ -50,15 +50,16 @@ fn probe(name: &str, arg: &str) -> bool {
 }
 
 fn find_rop_tool() -> Option<RopTool> {
-    // macOS: ROPgadget and ropper don't understand Mach-O — prefer radare2.
-    #[cfg(target_os = "macos")]
+    // macOS (Mach-O) and Windows (PE): prefer radare2 — it handles both
+    // formats natively. ROPgadget/ropper work but radare2 is the better pick.
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     if probe("r2", "-h") { return Some(RopTool::Radare2); }
 
     if probe("ROPgadget", "--help") { return Some(RopTool::ROPgadget); }
     if probe("ropper", "--help")    { return Some(RopTool::Ropper);    }
 
-    // Linux/Windows fallback to radare2 if the others aren't available.
-    #[cfg(not(target_os = "macos"))]
+    // Linux fallback to radare2 if the others aren't available.
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     if probe("r2", "-h") { return Some(RopTool::Radare2); }
 
     None
@@ -120,11 +121,14 @@ pub async fn generate_poc(
     let rop_tool = find_rop_tool().ok_or_else(|| {
         #[cfg(target_os = "macos")]
         return "No ROP gadget tool found.\n  \
-                macOS: brew install radare2\n  \
-                (ROPgadget and ropper do not support Mach-O binaries)".to_string();
-        #[cfg(not(target_os = "macos"))]
+                macOS: brew install radare2".to_string();
+        #[cfg(target_os = "windows")]
+        return "No ROP gadget tool found.\n  \
+                Windows: scoop install radare2\n  \
+                (via UniGetUI, Scoop, or winget install radare2.radare2)".to_string();
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         return "No ROP gadget tool found. Install one:\n  \
-                pip3 install ROPgadget\n  pip3 install ropper\n  brew/apt install radare2"
+                pip3 install ROPgadget\n  pip3 install ropper\n  apt/brew install radare2"
             .to_string();
     })?;
     let tool_name = rop_tool_name(&rop_tool);
@@ -477,7 +481,16 @@ pub async fn generate_poc(
         std::env::consts::OS,
         arch = std::env::consts::ARCH,
     );
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(target_os = "windows")]
+    let platform_ctx = format!(
+        "Platform: Windows {} (PE binary, ASLR enabled by default)\n\
+         Architecture: {arch}\n\
+         pwntools has limited Windows support — the exploit script may need \
+         to be run under WSL or adapted for Windows process handling.",
+        std::env::consts::OS,
+        arch = std::env::consts::ARCH,
+    );
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     let platform_ctx = format!(
         "Platform: {} {}", std::env::consts::OS, std::env::consts::ARCH
     );

@@ -225,7 +225,7 @@ export default function Results({ onClose }: Props) {
                       {poc?.status === "running" ? "Generating PoC…" : "Gen PoC"}
                     </button>
                     <span className="text-[10px] text-[#8b949e]">
-                      Requires <code className="font-mono">radare2</code> (macOS) or <code className="font-mono">ROPgadget</code> / <code className="font-mono">ropper</code> (Linux)
+                      Requires <code className="font-mono">radare2</code> (macOS/Windows) or <code className="font-mono">ROPgadget</code> / <code className="font-mono">ropper</code> (Linux)
                     </span>
                   </div>
                   <p className="text-[10px] text-[#8b949e]">

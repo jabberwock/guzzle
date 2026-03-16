@@ -176,9 +176,9 @@ npm run tauri dev
 ---
 
 <details>
-<summary><strong>Windows (experimental)</strong></summary>
+<summary><strong>Windows</strong></summary>
 
-> **Note:** Windows support is experimental. libFuzzer requires LLVM Clang — MSVC does not include it.
+> **Note:** libFuzzer requires LLVM Clang — MSVC does not include it.
 
 ### 1. Install LLVM
 
@@ -271,6 +271,7 @@ After a crash is found, select it in the Results panel and click **Gen PoC**. Th
 | Platform | Tool | Install |
 |----------|------|---------|
 | macOS    | radare2 | `brew install radare2` |
+| Windows  | radare2 | `scoop install radare2` (via [UniGetUI](https://github.com/marticliment/UniGetUI) or Scoop) |
 | Linux    | ROPgadget or ropper | `pip3 install ROPgadget` |
 
 **To run the generated script:**
@@ -374,7 +375,7 @@ PRs and issues welcome. A few ground rules:
 - New AI provider presets
 - Better tree-sitter parsing for edge-case C/C++ signatures
 - Distro-specific install fixes / docs
-- Windows testing and fixes (experimental platform, needs love)
+- Windows testing and fixes
 
 **What to avoid**
 - Large refactors without prior discussion
