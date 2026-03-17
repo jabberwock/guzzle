@@ -103,6 +103,27 @@ fn emit(app: &AppHandle, msg: impl Into<String>) {
     let _ = app.emit("poc_log", msg.into());
 }
 
+#[derive(Debug, PartialEq)]
+enum BugClass {
+    StackOverflow,
+    HeapOverflow,
+    UseAfterFree,
+    Unknown,
+}
+
+fn detect_bug_class(asan_report: &str) -> BugClass {
+    let r = asan_report.to_ascii_lowercase();
+    if r.contains("stack-buffer-overflow") {
+        BugClass::StackOverflow
+    } else if r.contains("heap-buffer-overflow") {
+        BugClass::HeapOverflow
+    } else if r.contains("heap-use-after-free") || r.contains("use-after-free") {
+        BugClass::UseAfterFree
+    } else {
+        BugClass::Unknown
+    }
+}
+
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn generate_poc(
@@ -392,6 +413,7 @@ pub async fn generate_poc(
     }
 
     // ── Step 6: Extract ROP gadgets ──────────────────────────────────────────
+    let bug_class = detect_bug_class(&asan_report);
     emit(&app, format!("[ 6/6 ] Extracting ROP gadgets with {tool_name}…"));
     let gadgets = match run_rop_tool(&rop_tool, reproducer_path.to_str().unwrap(), &temp_dir) {
         Ok(g) => {
@@ -495,6 +517,18 @@ pub async fn generate_poc(
         "Platform: {} {}", std::env::consts::OS, std::env::consts::ARCH
     );
 
+    // Frame gadgets based on bug class. For heap bugs at stage 1, a full gadget
+    // dump is noise — the AI needs a write primitive before gadgets are useful.
+    let gadgets_section = match bug_class {
+        BugClass::StackOverflow => gadgets,
+        BugClass::HeapOverflow | BugClass::UseAfterFree => format!(
+            "(Gadgets extracted and available for stage 2 exploitation once a write primitive \
+             is established — see the full list below. Do NOT attempt to use them yet: the \
+             adjacent heap object and corruption target must be identified first.)\n\n{gadgets}"
+        ),
+        BugClass::Unknown => gadgets,
+    };
+
     // Truncate harness source to avoid blowing the context window.
     let harness_preview: String = harness_final
         .lines()
@@ -535,8 +569,8 @@ Fuzzer harness source (shows how the crash input maps to function arguments):
 {harness_preview}
 ```
 
-Available ROP gadgets:
-{gadgets}
+ROP gadgets:
+{gadgets_section}
 
 The ASan report above identifies the vulnerability class. Generate a complete pwntools
 Python3 exploit script appropriate for that class:
@@ -545,13 +579,17 @@ If STACK overflow:
   - Use cyclic() to find the exact offset to the saved return address
   - On x86_64: overwrite RIP; on ARM64: overwrite the saved x30 (link register) on the stack
   - Demonstrate control of the instruction pointer
-  - If gadgets are available, attempt ret2libc / ret2system
+  - Use the ROP gadgets above to build a ret2libc / ret2system chain
 
 If HEAP overflow:
-  - Do NOT use cyclic() — there is no stack offset
-  - Craft an input that triggers the overflow and demonstrate the out-of-bounds write
-  - Describe what heap metadata or adjacent object could be corrupted
-  - On Linux/glibc: note tcache/fastbin/unsorted-bin techniques
+  - Do NOT use cyclic() — there is no stack offset to find
+  - Craft an input that triggers the overflow and demonstrates the out-of-bounds write
+  - Stage 1 goal: identify what object sits adjacent to the overflow buffer in memory
+    and which of its fields can be corrupted (length, pointer, function pointer)
+  - Stage 2 (once a write primitive is established): use the ROP gadgets to redirect
+    execution — but do NOT attempt to build a ROP chain in this script yet, because
+    the adjacent object and corruption target are not yet known
+  - On Linux/glibc: note tcache/fastbin/unsorted-bin grooming techniques
   - On macOS/libmalloc: note magazine allocator metadata corruption
 
 If USE-AFTER-FREE or OOB READ:
@@ -615,6 +653,36 @@ mod tests {
         let cfg_pos     = src[..no_pie_pos].rfind("#[cfg(target_os = \"linux\")]")
             .expect("-no-pie must be inside a #[cfg(target_os = \"linux\")] block");
         assert!(cfg_pos < no_pie_pos);
+    }
+
+    #[test]
+    fn detect_bug_class_stack() {
+        let report = "AddressSanitizer: stack-buffer-overflow on address 0x...";
+        assert_eq!(detect_bug_class(report), BugClass::StackOverflow);
+    }
+
+    #[test]
+    fn detect_bug_class_heap() {
+        let report = "AddressSanitizer: heap-buffer-overflow on address 0x...";
+        assert_eq!(detect_bug_class(report), BugClass::HeapOverflow);
+    }
+
+    #[test]
+    fn detect_bug_class_uaf() {
+        let report = "AddressSanitizer: heap-use-after-free on address 0x...";
+        assert_eq!(detect_bug_class(report), BugClass::UseAfterFree);
+    }
+
+    #[test]
+    fn detect_bug_class_unknown() {
+        assert_eq!(detect_bug_class("(ASan report unavailable)"), BugClass::Unknown);
+        assert_eq!(detect_bug_class("SEGV on unknown address 0x0"), BugClass::Unknown);
+    }
+
+    #[test]
+    fn detect_bug_class_case_insensitive() {
+        assert_eq!(detect_bug_class("HEAP-BUFFER-OVERFLOW"), BugClass::HeapOverflow);
+        assert_eq!(detect_bug_class("Stack-Buffer-Overflow"), BugClass::StackOverflow);
     }
 
     #[test]
