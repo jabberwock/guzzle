@@ -88,7 +88,7 @@ struct AnthropicBlock {
 
 // ── Prompt building ──────────────────────────────────────────────────────────
 
-fn build_prompt(signature: &FunctionSignature, context_lines: &str) -> (String, String) {
+fn build_prompt(signature: &FunctionSignature, context_lines: &str, include_hints: &[String]) -> (String, String) {
     let param_str = signature
         .params
         .iter()
@@ -159,9 +159,22 @@ Requirements:
     linkage and CANNOT be called from the harness — no exported symbol exists.
     Do NOT forward-declare it and do NOT call it. Call the public (non-static)
     function in the same file that invokes it internally.
-
+{include_rule}
 Return ONLY the C/C++ source code, no markdown fences."#,
-        func_name = signature.name
+        func_name = signature.name,
+        include_rule = if include_hints.is_empty() {
+            String::new()
+        } else {
+            let list = include_hints.iter()
+                .map(|h| format!("   <{h}>"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!(
+                "\n13. The following system headers were confirmed to exist on this machine — \
+                you MAY use #include <...> for any of them:\n{list}\n    \
+                Do NOT #include library headers that are not in this list."
+            )
+        },
     );
 
     (system, user)
@@ -205,8 +218,10 @@ pub async fn generate_harness(
     provider: AiProvider,
     signature: FunctionSignature,
     context_lines: String,
+    include_hints: Option<Vec<String>>,
 ) -> Result<String, String> {
-    let (system, user) = build_prompt(&signature, &context_lines);
+    let hints = include_hints.unwrap_or_default();
+    let (system, user) = build_prompt(&signature, &context_lines, &hints);
     let client = make_client()?;
 
     let raw = match provider.format {
@@ -361,7 +376,7 @@ mod tests {
     #[test]
     fn build_prompt_contains_function_name() {
         let sig = dummy_sig("ProcessImage");
-        let (system, user) = build_prompt(&sig, "// context");
+        let (system, user) = build_prompt(&sig, "// context", &[]);
         assert!(user.contains("ProcessImage"));
         assert!(!system.is_empty());
     }
@@ -369,14 +384,14 @@ mod tests {
     #[test]
     fn build_prompt_contains_context() {
         let sig = dummy_sig("foo");
-        let (_, user) = build_prompt(&sig, "int foo() {}");
+        let (_, user) = build_prompt(&sig, "int foo() {}", &[]);
         assert!(user.contains("int foo() {}"));
     }
 
     #[test]
     fn build_prompt_no_markdown_fences_in_system() {
         let sig = dummy_sig("foo");
-        let (system, _) = build_prompt(&sig, "");
+        let (system, _) = build_prompt(&sig, "", &[]);
         // System prompt should instruct to omit markdown fences
         assert!(system.contains("no markdown"));
     }
@@ -384,14 +399,14 @@ mod tests {
     #[test]
     fn build_prompt_includes_llvmfuzzer_requirement() {
         let sig = dummy_sig("foo");
-        let (_, user) = build_prompt(&sig, "");
+        let (_, user) = build_prompt(&sig, "", &[]);
         assert!(user.contains("LLVMFuzzerTestOneInput"));
     }
 
     #[test]
     fn build_prompt_mentions_fuzzed_data_provider() {
         let sig = dummy_sig("ParseData");
-        let (_, user) = build_prompt(&sig, "");
+        let (_, user) = build_prompt(&sig, "", &[]);
         assert!(
             user.contains("FuzzedDataProvider"),
             "prompt must mention FuzzedDataProvider for structured input consumption"
@@ -401,14 +416,14 @@ mod tests {
     #[test]
     fn build_prompt_requires_malloc_cast() {
         let sig = dummy_sig("foo");
-        let (_, user) = build_prompt(&sig, "");
+        let (_, user) = build_prompt(&sig, "", &[]);
         assert!(user.contains("malloc") && (user.contains("cast") || user.contains("Cast")));
     }
 
     #[test]
     fn build_prompt_requires_zero_init() {
         let sig = dummy_sig("foo");
-        let (_, user) = build_prompt(&sig, "");
+        let (_, user) = build_prompt(&sig, "", &[]);
         assert!(user.contains("zero-init") || user.contains("memset") || user.contains("{0}"),
             "prompt must instruct AI to zero-initialize output structs");
     }
@@ -416,7 +431,7 @@ mod tests {
     #[test]
     fn build_prompt_requires_single_free() {
         let sig = dummy_sig("foo");
-        let (_, user) = build_prompt(&sig, "");
+        let (_, user) = build_prompt(&sig, "", &[]);
         assert!(user.contains("exactly once") || user.contains("free a pointer and") || user.contains("if/else"),
             "prompt must instruct AI to free each pointer exactly once");
     }
@@ -424,7 +439,7 @@ mod tests {
     #[test]
     fn build_prompt_requires_copying_context_defines() {
         let sig = dummy_sig("foo");
-        let (_, user) = build_prompt(&sig, "");
+        let (_, user) = build_prompt(&sig, "", &[]);
         // Reactive: AI uses #define names from context without copying their definitions
         // into the harness, producing "undeclared identifier" compile errors.
         assert!(
@@ -436,9 +451,27 @@ mod tests {
     #[test]
     fn build_prompt_no_posix_headers_required() {
         let sig = dummy_sig("foo");
-        let (_, user) = build_prompt(&sig, "");
+        let (_, user) = build_prompt(&sig, "", &[]);
         // Prompt must not require POSIX-only headers without Windows guard
         assert!(user.contains("unistd.h") == false || user.contains("_WIN32"));
+    }
+
+    #[test]
+    fn build_prompt_includes_hint_headers_in_rule() {
+        let sig = dummy_sig("foo");
+        let hints = vec!["znc/Message.h".to_string(), "openssl/ssl.h".to_string()];
+        let (_, user) = build_prompt(&sig, "", &hints);
+        assert!(user.contains("znc/Message.h"), "prompt must list confirmed headers");
+        assert!(user.contains("openssl/ssl.h"));
+        assert!(user.contains("confirmed to exist"));
+    }
+
+    #[test]
+    fn build_prompt_no_include_rule_when_hints_empty() {
+        let sig = dummy_sig("foo");
+        let (_, user) = build_prompt(&sig, "", &[]);
+        assert!(!user.contains("confirmed to exist"),
+            "include hint rule must be absent when no hints provided");
     }
 
     #[test]

@@ -23,6 +23,7 @@ export default function HarnessEditor({ onBack, onNext }: Props) {
     filePath,
     harnessSource,
     harnessGenerating,
+    resolvedHeaders,
     aiProvider,
     setHarnessSource,
     setHarnessGenerating,
@@ -133,7 +134,7 @@ export default function HarnessEditor({ onBack, onNext }: Props) {
     // Commit provider to store
     setAiProvider(provider);
     try {
-      const harness = await generateHarness(provider, functionSignature, getContextLines());
+      const harness = await generateHarness(provider, functionSignature, getContextLines(), resolvedHeaders.length > 0 ? resolvedHeaders : undefined);
       setHarnessSource(harness);
     } catch (e) {
       setError(String(e));

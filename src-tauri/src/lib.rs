@@ -1,6 +1,6 @@
 mod commands;
 
-use commands::{toolchain, parser, ai, compile, fuzzer, poc, cache};
+use commands::{toolchain, parser, ai, compile, fuzzer, poc, cache, includes};
 
 #[tauri::command]
 fn reveal_in_finder(path: String) -> Result<(), String> {
@@ -42,6 +42,7 @@ pub fn run() {
             poc::generate_poc,
             cache::get_cached_harness,
             cache::save_cached_harness,
+            includes::resolve_includes,
             reveal_in_finder,
         ])
         .run(tauri::generate_context!())

@@ -33,9 +33,20 @@ export async function parseFunctionAtLine(
 export async function generateHarness(
   provider: AiProvider,
   signature: FunctionSignature,
-  contextLines: string
+  contextLines: string,
+  includeHints?: string[]
 ): Promise<string> {
-  return invoke("generate_harness", { provider, signature, contextLines });
+  return invoke("generate_harness", { provider, signature, contextLines, includeHints });
+}
+
+export interface ResolvedIncludes {
+  include_dirs: string[];
+  available_headers: string[];
+  unresolved: string[];
+}
+
+export async function resolveIncludes(filePath: string): Promise<ResolvedIncludes> {
+  return invoke("resolve_includes", { filePath });
 }
 
 export async function compileHarness(args: {

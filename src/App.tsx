@@ -2,18 +2,41 @@ import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readTextFile } from "@tauri-apps/plugin-fs";
 import { useSession } from "./store/session";
+import { resolveIncludes } from "./lib/tauri";
 import SourceViewer from "./components/SourceViewer";
 import Wizard from "./components/Wizard";
 
+async function afterOpen(
+  path: string,
+  content: string,
+  setFilePath: (p: string, c: string) => void,
+  updateCompileSettings: (s: { includes: string[] }) => void,
+  setResolvedHeaders: (h: string[]) => void,
+) {
+  setFilePath(path, content);
+  try {
+    const result = await resolveIncludes(path);
+    if (result.include_dirs.length > 0) {
+      updateCompileSettings({ includes: result.include_dirs });
+    }
+    if (result.available_headers.length > 0) {
+      setResolvedHeaders(result.available_headers);
+    }
+  } catch (e) {
+    // Non-fatal — resolve failure just means no auto-detected includes
+    console.warn("resolveIncludes failed:", e);
+  }
+}
+
 function HomePage({ onOpen }: { onOpen: () => void }) {
-  const { recentFiles, setFilePath, addRecentFile } = useSession();
+  const { recentFiles, setFilePath, addRecentFile, updateCompileSettings, setResolvedHeaders } = useSession();
   const [recentError, setRecentError] = useState<string | null>(null);
 
   const openRecent = async (path: string) => {
     setRecentError(null);
     try {
       const content = await readTextFile(path);
-      setFilePath(path, content);
+      await afterOpen(path, content, setFilePath, updateCompileSettings, setResolvedHeaders);
       addRecentFile(path);
     } catch (e) {
       console.error("Failed to open recent file", e);
@@ -88,7 +111,7 @@ function Header({ filePath, onOpen }: { filePath: string | null; onOpen: () => v
 }
 
 export default function App() {
-  const { filePath, setFilePath, addRecentFile } = useSession();
+  const { filePath, setFilePath, addRecentFile, updateCompileSettings, setResolvedHeaders } = useSession();
 
   const handleOpen = async () => {
     try {
@@ -98,7 +121,7 @@ export default function App() {
       });
       if (typeof selected === "string") {
         const content = await readTextFile(selected);
-        setFilePath(selected, content);
+        await afterOpen(selected, content, setFilePath, updateCompileSettings, setResolvedHeaders);
         addRecentFile(selected);
       }
     } catch (e) {

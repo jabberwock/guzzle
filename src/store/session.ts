@@ -109,6 +109,7 @@ interface SessionState {
   // Harness
   harnessSource: string;
   harnessGenerating: boolean;
+  resolvedHeaders: string[]; // library headers confirmed to exist on this machine
 
   // Compile
   compileSettings: CompileSettings;
@@ -137,6 +138,7 @@ interface SessionState {
   setToolchainInfo: (info: ToolchainInfo) => void;
   setHarnessSource: (src: string) => void;
   setHarnessGenerating: (v: boolean) => void;
+  setResolvedHeaders: (headers: string[]) => void;
   updateCompileSettings: (s: Partial<CompileSettings>) => void;
   setCompiledBinaryPath: (p: string | null) => void;
   appendCompileLog: (line: string) => void;
@@ -163,6 +165,7 @@ export const useSession = create<SessionState>()(persist((set) => ({
   toolchainInfo: null,
   harnessSource: "",
   harnessGenerating: false,
+  resolvedHeaders: [],
   compileSettings: {
     sanitizers: ["fuzzer", "address"],
     includes: [],
@@ -182,7 +185,7 @@ export const useSession = create<SessionState>()(persist((set) => ({
   aiProvider: PRESET_PROVIDERS[0], // DeepSeek by default
 
   setFilePath: (path, content) =>
-    set({ filePath: path, fileContent: content, selectedLine: null, functionSignature: null }),
+    set({ filePath: path, fileContent: content, selectedLine: null, functionSignature: null, resolvedHeaders: [] }),
   addRecentFile: (path) =>
     set((s) => ({
       recentFiles: [path, ...s.recentFiles.filter((f) => f !== path)].slice(0, 10),
@@ -206,6 +209,7 @@ export const useSession = create<SessionState>()(persist((set) => ({
   setToolchainInfo: (info) => set({ toolchainInfo: info }),
   setHarnessSource: (src) => set({ harnessSource: src }),
   setHarnessGenerating: (v) => set({ harnessGenerating: v }),
+  setResolvedHeaders: (headers) => set({ resolvedHeaders: headers }),
   updateCompileSettings: (s) =>
     set((prev) => ({ compileSettings: { ...prev.compileSettings, ...s } })),
   setCompiledBinaryPath: (p) => set({ compiledBinaryPath: p }),
