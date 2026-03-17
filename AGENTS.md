@@ -261,11 +261,49 @@ to explain.
 - **Iterate on grooming**: wrong chunk size or ordering means you corrupt the wrong object — read the ASan shadow output after each attempt and adjust
 - **Minimise before exploiting**: `./fuzzer -minimize_crash=1` strips the crash input to its essential bytes, making the heap layout easier to reason about
 
+## Fuzzing third-party libraries (e.g. ZNC, OpenSSL, libpng)
+
+When the target file includes library headers (`#include <znc/Message.h>`,
+`#include <openssl/ssl.h>`, etc.), Guzzle automatically resolves them on file
+open:
+
+1. **Include path auto-detection** — Guzzle scans `#include <lib/header.h>`
+   directives and searches candidate system directories (Homebrew prefixes on
+   macOS, standard paths on Linux, LLVM/Scoop paths on Windows, plus `CPATH`
+   and `C_INCLUDE_PATH` env vars). Headers found are split into:
+   - `include_dirs` — non-default directories added to **Include Paths** in
+     the Compile step automatically (e.g. `/opt/homebrew/include`)
+   - `available_headers` — passed to the AI prompt so it knows which
+     `#include <...>` directives are safe to use (e.g. `znc/Message.h`)
+
+2. **What this means for you as an agent** — if you're driving the workflow
+   from the CLI, run the equivalent yourself before generating the harness:
+   ```bash
+   # Find where the library headers live
+   find /usr /opt/homebrew/include /usr/local/include -name "Message.h" 2>/dev/null
+   # e.g. found at /opt/homebrew/include/znc/Message.h → add -I/opt/homebrew/include
+   ```
+   Then pass the resolved directories as `-I` flags in the compile command and
+   tell the AI which headers it can include.
+
+3. **Pre-compiled library** — if the library itself needs to be linked, add the
+   `.a`/`.so`/`.dylib` in the Compile step under **+ Add library**, or pass it
+   directly on the clang++ command line.
+
+   Example for ZNC (headers installed via package manager, library built from source):
+   ```bash
+   clang++ -fsanitize=fuzzer,address -O1 -g \
+     -I/opt/homebrew/include \
+     harness.cpp target.cpp \
+     -L/opt/homebrew/lib -lznc \
+     -o fuzzer
+   ```
+
 ## Guzzle GUI quick reference
 
 | Step | What happens |
 |---|---|
-| Open file | Load C/C++ source into Monaco editor |
+| Open file | Load C/C++ source into Monaco editor; auto-detects library include paths |
 | Click function | Tree-sitter parses and identifies the function signature |
 | Fuzz Wizard → Harness | AI generates the harness; you can edit before compiling |
 | Fuzz Wizard → Compile | clang + ASan + libFuzzer; output goes to `.guzzle/fuzzer` |
